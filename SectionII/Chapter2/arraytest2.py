@@ -1,10 +1,13 @@
 from array import array
 
-x = array('I')
 
-x.fromlist(list(range(1, 6)))
-print(x)
-print(x.tobytes())
-print(x)
-x.frombytes(x.tobytes())
-print(x)
+if __name__ == '__main__':
+    x = array('I')
+
+    for i in range(6):
+        x.append(i)
+
+    y = x.tolist()
+    print(x.buffer_info())
+    print(y)
+    print(type(y))
