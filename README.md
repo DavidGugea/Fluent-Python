@@ -350,3 +350,57 @@ The ```bisect``` module offers two main functions - ```bisect``` and ```insort``
 Sorting is expensive, so once you have a sorted sequence, it's good to keep it that way. That is why ```bisect.insort``` was created.
 
 You can use the ```bisect.insort(seq, item)``` to insert an ```item``` into a ```sequence``` in ascending order.
+
+## Arrays
+
+If a list only contains numbers, it's better to work with arrays ( ```array.array``` ). They ar emore efficient thatn lists and support all mutable sequence oprations. It also contains some additional methods for fast loading and saving ( e.g. ```.frombytes``` or ```.tofile``` )
+
+> This module defines an object type which can compactly represent an array of basic values: characters, integers, floating point numbers. Arrays are sequence types and behave very much like lists, except that the type of objects stored in them is constrained. The type is specified at object creation time by using a type code, which is a single character. The following type codes are defined:
+
+Here is the list of typecodes:
+
+![Array type codes](ScreenshotsForNotes/Chapter2/ArrayTypeCodes.PNG)
+
+Whenever you start building an array, you must give it the underlying C type. You can also give it an optional initializer, which has to be an iterable. 
+
+You can use methods like ```.tofile``` to put an entire array into a file ( using machine code ).
+
+```Python
+from array import array
+
+with open("arrayfile.bin", "wb") as f:
+    x = array('I', range(6))
+    x.tofile(f)
+```
+
+The array data structure doesn't have the following methods in comparison to ```list```:
+
+* ```clear()```
+* ```copy()```
+* ```__reversed__()```
+* ```sort([key], [reverse])```
+
+## Memory Views
+
+```>```
+
+The built-in ```memoryview``` class is a shared-memory sequence type that lets you handle slices of arrays wihtout copying bytes.
+
+A memoryview is eseentially a generlized NumPy array structure in Python itlsef (without the math). It allows you to share memory between data-structures ( things like PIL images, SQLite databases, NumPy arrays, etc. ) without first copying. This is very important for large data sets.
+
+Using notation similar to the ```array``` module, the ```memoryview.cast``` method lets you change the way multiple bytes are read or written as units without moving bits around ( just like the C ```cast``` operator ). ```memoryview.cast``` returns yet another ```memoryview``` object, alwyas sharing the same memory.
+
+```Python
+>>> numbers = array.array('h', [-2, -1, 0, 1, 2])
+>>> memv = memoryview(numbers)
+>>> len(memv)
+5
+>>> memv[0]
+-2
+>>> memv_oct = memv.cast('B')
+>>> memv_oct.tolist()
+[254, 255, 255, 255, 0, 0, 1, 0, 2, 0]
+>>> memv_oct[5] = 4
+>>> numbers
+array('h', [-2, -1, 1024, 1, 2])
+```
