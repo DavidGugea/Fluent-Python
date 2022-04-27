@@ -404,3 +404,63 @@ Using notation similar to the ```array``` module, the ```memoryview.cast``` meth
 >>> numbers
 array('h', [-2, -1, 1024, 1, 2])
 ```
+
+# 3. Dictionaries and Sets
+
+> Hash tables are the engines behind Python's high-performance dicts.
+
+Dictionaries and sets in python are implemented using hash-tables which makes them very fast and memory efficient.
+
+## Generic Mapping Types
+
+The ```collections.abc``` module provided the ```Mapping``` and ```MutableMapping``` abstract base classes to formalize the interfaces of ```dict``` and similar types.
+
+![](ScreenshotsForNotes/Chapter3/ABCsMappingMutableMapping.PNG)
+
+Whenever you extend the built-in sequences, you usually directly extend the ```dict``` or ```collections.UserDict```. You'll rarely extend one of the ABCs. The ABCs make it easier to understand the interfaces.
+
+> The main value of the ABCs is documenting and formalizing the minimal interfaces for mappings, and serving as criteria for ```isinstance``` tests in cod ethat needs to support mapping in a broad sense
+
+```Python
+>>> my_dict = {}
+>>> isinstance(my_dict, abc.Mapping)
+True
+```
+
+> Using ```isinstance``` is better than checking wheter a function argument is of ```dict``` type, because then alternative mapping types can be used.
+
+All mapping types in python implement ```dict``` so the rule that keys must be *hashable* is a general rul in mapping. The values don't have to be *hashable*, only the keys.
+
+> An object is hashable if it has a hash value which never changes during its lifetime ( it needs a ```__hash__()``` method ) and can be compaerd to other objects ( it needs an ```__eq__()``` method ). Hashable objects which compare equal must have the same hash value.
+
+Given these ground rules, here are several ways of buildling dicts:
+
+```Python
+>>> a = dict(one=1, two=2, three=3)
+>>> b = {'one': 1, 'two': 2, 'three': 3}
+>>> c = dict(zip(['one', 'two', 'three'], [1, 2, 3]))
+>>> d = dict([('two', 2), ('one', 1), ('three', 3)])
+>>> e = dict({'three': 3, 'one': 1, 'two': 2})
+>>> a == b == c == d == e
+>>> True
+```
+
+## Dict Comprehensions
+
+A *dictcomp* builds a dictionary by building **```key:value```** pairs from any iterable. Dict comps are build using curly braces ```{}```, unlike lists which use brackets ```[]``` and they need to be built using key value pairs:
+
+```Python
+some_list = list(zip(range(1, 11), range(11, 21)))
+dictcomp = {a: b for a,b in some_list}
+print(dictcomp)
+# {1: 11, 2: 12, 3: 13, 4: 14, 5: 15, 6: 16, 7: 17, 8: 18, 9: 19, 10: 20}
+```
+
+## Mapping with Flexible Key Lookup
+
+Sometimes you might need a mapping that returns a default value whenever a key is not found. You can solve this problem by:
+
+* Using a ```collections.defaultdict``` instead of a plain ```dict```.
+* Subclassing the basic ```dict``` type and adding overriding the  ```__missing__``` method.
+
+> The mechanisms that makes ```defaultdict``` work by calling ```default_factory``` is actually the ```__missing__``` special method, a feature supported by all standard mapping types that we discuss next.
