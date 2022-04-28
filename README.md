@@ -464,3 +464,309 @@ Sometimes you might need a mapping that returns a default value whenever a key i
 * Subclassing the basic ```dict``` type and adding overriding the  ```__missing__``` method.
 
 > The mechanisms that makes ```defaultdict``` work by calling ```default_factory``` is actually the ```__missing__``` special method, a feature supported by all standard mapping types that we discuss next.
+
+## The ```__missing__``` method
+
+The ```__missing__``` method is not defined in the standard ```dict``` implementation but ```__dict__``` is aware of it. If you build a subclass that inherits from ```dict``` and provide a ```__missing__``` method, the standard ```dict.__getitem__``` will cal it whenever the given key is not found, instead of raising ```KeyError```.
+
+> The ```__missing__``` method is just called by ```__getitem__``` (i.e., for the ```d[k]``` operator ). The presence of a ```__missing__``` method has no effect on the behavior of other methods that look up keys, such as ```get``` or ```__contains__``` ( which implementes the ```in``` operator ). This is why the ```default_factory``` or ```defaultdict``` works only with ```__getitem__```, as noted in the warning at the end of the previous section.
+
+Example of an implementation of ```__missing__```:
+
+```Python
+class Test(dict):
+    def __missing__(self, key):
+        print("The key {0} couldn't be found. You are now inside the __missing__ method.".format(key))
+
+
+if __name__ == "__main__":
+    t = Test()
+    t['a'] = 1
+    t['b'] = 2
+    t['c'] = 3
+
+    print(t.keys())
+    x = t['d']
+    print("x is -- > {0}".format(x))
+
+"""
+Output:
+
+dict_keys(['a', 'b', 'c'])
+The key d couldn't be found. You are now inside the __missing__ method.
+x is -- > None
+"""
+```
+
+Another implementation example of the ```__missing__``` method:
+
+```Python
+class StrKeyDict0(dict):
+    def __missing__(self, key):
+        """Overriding fordict_keys(['a', 'b', 'c'])"""
+        print("Entered missing with key -- > {0}".format(key))
+        if isinstance(key, str):
+            print("The instance of the missing key is of type string")
+            raise KeyError(key)
+
+        print("The instance of the missing key is not of type string")
+        return self[str(key)]
+
+    def get(self, key, default=None):
+        """overriding for dict.get(key)"""
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains(self, key):
+        """Overriding for >key in dict<"""
+        return key in self.keys() or str(key) in self.keys()
+```
+
+## Subclassing ```UserDict```
+
+Whenever we want to build a new mapping that inherits from ```dict``` it's almost always better to make it inherit from ```UserDict```.
+
+The main reason is that the built-in ```dict``` class has some implementation shortcuts that force is to override methods and if we don't then bugs will occurr on the way that are very hard to find.
+
+**```UserDict``` doesn't inherit from ```dict```, it has a ```dict``` instance inside of it that holds our items.**
+
+Here is an example of how ```UserDict``` simplifies our ```StrKeyDict``` from the previous example:
+
+```Python
+class StrKeyDict0(dict):
+    def __missing__(self, key):
+        """Overriding fordict_keys(['a', 'b', 'c'])"""
+        print("Entered missing with key -- > {0}".format(key))
+        if isinstance(key, str):
+            print("The instance of the missing key is of type string")
+            raise KeyError(key)
+
+        print("The instance of the missing key is not of type string")
+        return self[str(key)]
+
+    def get(self, key, default=None):
+        """overriding for dict.get(key)"""
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains(self, key):
+        """Overriding for >key in dict<"""
+        return key in self.keys() or str(key) in self.keys()
+```
+
+> ```UserDict``` stores all keys as ```str``` and avoids unplesant surprises if the instance is built or updated with data containing nonstring keys.
+
+```Python
+class StrKeyDict(collections.UserDict):
+    def __missing__(self, key):
+        if isinstance(key, str):
+            raise KeyError(key)
+
+        return self[str(key)]
+
+    def __contains__(self, key):
+        return str(key) in self.data
+
+    def __setitem__(self, key, item):
+        self.data[str(key)] = item
+```
+
+This makes things a lot simpler since ```__contains__``` doesn't have to double check if the key or if the string version of the key is in keys it can just directly check the key in the ```data``` property of the ```UserDict``` which is the internal ```dict``` that holds our items.
+The same goes for ```__setitem__``` since we can directly set all the items as strings, this is also what makes ```__contains__``` a lot easier to implement.
+
+> Because ```UserDict``` subclasses ```MutableMapping```, the remaining methods that make ```StrKeyDict``` a full-fledged mapping are inherited from ```UserDict```, ```MutableMapping``` or ```Mapping```. The latter have several useful concrete methods, in spite of being abstract base classes ( ABCs ).
+
+In the ```MutableMapping``` and ```Mapping``` classes there are 2 methods that are worth noting (```>```):
+
+* **```MutableMapping.update```**
+    * This powerful method can be called directly but is also used by ```__init__``` to load the instance from other mappings, from iterables of ```(key, value)``` pairs, and keyword arguments. Because it uses ```self[key] = value``` to add items, it ends up calling our implementation of ```__setitem__```.
+* **```Mapping.get```**
+    * In ```StrKeyDict0```, we had to code our own get to obtain results consistent with ```__getitem__```, but in the example were we used ```UserDict```, we inherited ```Mapping.get```, which is implemented exactly like ```StrKeyDict0.get``` ( the version where we inherited directly from the built-in ```dict``` class ).
+
+## Immutable Mappings
+
+Since *Python 3.3*, the ```types``` module has added a new wrapper class called ```MappingProxyType``` that receives a mapping and returns a ```mappingproxy``` instance. This instance is a ***read-only*** and ***dynamic*** view of the original mapping. That menas that we can't change anything to the original mapping but since it's dynamic, every time we make a change to the original mapping, the ```mappingproxy``` instance will have that change too.
+
+Example:
+
+```Python
+from types import MappingProxyType
+
+d = {1: 'A'}
+d_proxy = MappingProxyType(d)
+print(d)
+print(d_proxy[1])
+try:
+    d_proxy[2] = 'B'
+except TypeError as e:
+    print(e)
+
+d[2] = 'B'
+print(d_proxy)
+print(d_proxy[2])
+
+"""
+Output:
+{1: 'A'}
+A
+'mappingproxy' object does not support item assignment
+{1: 'A', 2: 'B'}
+B
+"""
+```
+
+## Sets items must be hashable
+
+Set elements must be *hashable*. The ```set``` type is not hashable but the ```frozenset``` type is, so it's possible to have instances of ```frozenset``` inside your ```set```.
+
+## ```set``` Literals
+
+The syntax for ```set``` literals looks just like the math notation:
+
+```Python
+>>> a = {1, 2, 3}
+>>> b = {1}
+```
+
+The only difference is that we can't have an empty set. In order to build an empty set you must use the ```set()``` constructor. If you are writing ```{}``` you are not creating an empty ```set```, you are creating an empty ```dict```.
+
+```Python
+>>> c = set()
+```
+
+Using the literal syntax ```{1, 2, 3}``` is ***faster than using the constructor***: ```set([1, 2, 3])```. That is because Python has to first build a list, find the set name and the finally pass the list, which also occupies memory inside the set. If you would be using the literal syntax, Python would use the special ```BUILT_SET``` bytecode.
+
+> Literal ```set``` syntax like ```{1, 2, 3}``` is both ***faster and more readable*** than calling the constructor (e.g., ```set([1, 2, 3]))```. The latter form is slower because, to evaluate it, Python has to look up the ```set``` name to fetch the constructor, then build a list, and finally pass it to the constructor. In contrast, to process a literal like ```{1, 2 ,3}```, Python runs a specizlied ```BUILD_SET``` bytecode.
+
+This is the difference in bytecode between the two operations:
+
+```Python
+>>> from dis import dis
+>>> dis('{1}')
+  1           0 LOAD_CONST               0 (1)
+              2 BUILD_SET                1
+              4 RETURN_VALUE
+>>> dis('set([1])')
+  1           0 LOAD_NAME                0 (set)
+              2 LOAD_CONST               0 (1)
+              4 BUILD_LIST               1
+              6 CALL_FUNCTION            1
+              8 RETURN_VALUE
+```
+
+There is however no special syntax to create ```frozenset``` instances, they must be buillt using the constructor:
+
+```Python
+>>> frozenset(range(10))
+frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+```
+
+## Set Comprehensions
+
+Set comprehensions were added together with dict comprehensions in *Python 2.7*. ```set``` and ```dict``` comprehensions are very similar. The difference between them is that ```dict``` comprehensions need *key-value* pairs in order to be built while ```set``` comprehensions only need one value:
+
+```Python
+>>> even_number_set = {i for i in range(101) if i % 2 == 0}
+>>> even_number_set
+{0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96, 98, 100}
+```
+
+## Set Operations
+
+The following diagram represents an overview of the methods that you can expect from mutable and immutable sets.
+
+> Note that some operators and methods perform in-place changes on the target set (e.g, ```&=```, ```difference_update```, etc. ). Such operations make no sense in the ideal world of mathematical sets, and are not implemented in ```frozenset```.
+
+![](ScreenshotsForNotes/Chapter3/OverviewMutableImmutableSets.PNG)
+
+## Hash Tables in Dictionaries
+
+```>```
+
+This is a high-level view of how Python uses a hash table to ipmlement a ```dict```. Many details are omittde - the ```CPython``` code has some optimization tricks - but the overall description is accurate.
+
+A hash table is a sparse array (i.e, an array that always has empty cells). In standard data structure texts, the cells in a hash table are often called "buckets". In a ```dict``` hash table, there is a bucket for each item and it contains two fields: a reference to the key and a reference to the value of the item. BEcause all buckets have teh same size, access to an individual bucket is done by offset.
+
+Python tries to keep at least 1/3 of the buckets empty; if the hash table beocmes too crowded, it is copied to a new location with room for more buckets.
+
+To put an item in a hash table, the first step is to calculate the *hash value* of the item key, which is done with the ```hash()``` built-in function, explained next.
+
+### Hashes and equality
+
+The ```hash()``` built-in function works directly with built-in types and falls back to calling ```__hash__``` for user-defined types. If two objects compare equal, their has hvalues must also be equal, otherwise the has htable algorithm does not work. For example: because ```1 == 1.0``` is ```true```, ```hash(1) == hash(1.0)``` must also be true, even though the internal representation of an ```int``` and a ```float``` are very different. ( Because we just mentioned ```int```, here is a CPython implementation detail: the hash value of an int that fits in a machine word is the value of the ```int``` itself )
+
+Also, to be effective as hash table indexes, hash values should scatter around the index space as much as possible. This means that, ideally, objects that are similar but not equal should have hash values that different widely.
+
+Starting with *Python 3.3*, a random salt vlaue is added to the hashes of ```str```, ```bytes``` and ```datetime``` objects. The salt value is constant within a Python process but varies between interpreter runs. The random salt is a security measure to prevent a DOS attack. Details are in a note in the documentation for the ```__hash__``` special method.
+
+### The hash table algorithm
+
+To fetch the value at ```my_dict[search_key]```, Python calls ```hash(search_key)``` to obtain the *hash value* of ```search_key``` and uses the least significant bits of that number as an offset to look up a bucket in the hash table ( the number of bits used depends on the current size of the table ). If the found bucket is empty, ```KeyError``` is raised. Otherwise, the found bucket has an item - a ```found_key:found_value``` pair- and then Python checks wheter ```search_key == found_key```. If they match, that was the item sought: ```found_value``` is returned.
+
+However, is ```search_key``` and ```found_key``` do not match, this is a *hash collision*. This happens because a hash function maps arbitrary objects to a small number of bits, and -in addition- the hash table is indexed with a subset of those bits. In order to resolve the collision, the algorithm then takes different bits in the hash, massages them in a particular way and uses the result as an offset to look up a different bucket. If that is empty, ```KeyError``` is raised; if not, either the keys match and the item value is returned or the collision resolution process is repeated.
+
+Here is a diagram of the algorithm:
+
+![](ScreenshotsForNotes/Chapter3/HashAlgorithmOverview.PNG)
+
+The process to insert or update an item is the same, except that when an empty bucket is located, the new item is put there and when a bucket with a matching key is found, the value in that bucket is overwritten with the new value.
+
+Additionally, when inserting items, Python may determine that the hash table is too crowded an rebuild it to a new location with more room. As the hash table grows, so does the number of hash bits used as bucket offsets and this keeps the rate of collisions low.
+
+This implementation may seem like a lot of work, but even with millions of items in a ```dict```, many seraches happen with no collisions and the average number of collisions per search is between one and two. Under normal usage, even the unluckiest keys can be found after a handful of collisions are resolved.
+
+## Practical Consequences Of How Dict Works
+
+### Keys must be hashable objects
+
+An object is hashable if all of these requirements are met:
+
+1. It supports the ```hash()``` function via a ```__hash__()``` method that always returns the same value over the lifetime of the object.
+2. It supports equality via an ```__eq__()``` method.
+3. If ```a == b``` is ```True``` then ```hash(a) == hash(b)``` must also be ```True```.
+
+User-defined types are hashable by default because their has value is their ```id()``` and they all compare not equal.
+
+If you implement a class with a custom ```__eq__``` method and you want the instances to be hashable, you must also implement a suitable ```__hash__```, to make sure that when ```a == b``` is ```True``` then ```hash(a) == hash(b)``` is also ```True```. Otherwise you are breaking an invariant of the hash table algorithm, with the grave consequence that dicts and sets will not handle your objects reliably. On the other hand, if a class has a custom ```__eq__``` that dpeneds on mutable state, its instnaces are not hashable and you must never implement a ```__hash__``` method in such a class.
+
+### ```dict```s have significant memory overhead
+
+Because a ```dict``` uses a hash table internally and hash table must be sparse to work, they are not space efficient. For example, if you are handling a large quantity of recors, it makes sense to store them in a list of tuples or named tuples instead of using a list of dictionaries in JSON style, with one ```dict``` per record. Replacing dicts with tuples reduces the memory usage in two ways: by removing the overhead of one hash table per record and by not sotring the field names again with each record.
+
+For user-define types, the ```__slots__``` class attribute changes the storage of instance attributes from a ```dict``` to a ```tuple``` in each instance.
+
+Keep in mind we are talking about space optimizations. If you are dealing with a few million objects and your machine has gigabytes of RAM, you should postpone such optimizations until they are actually waranted. ***Optimization is the altar where maintainability is sacrificed.***
+
+### Key search is very fast
+
+The ```dict``` implementation is an example of trading space for time: dictionaries have significant memory overhead, but they provide fast access regardless of the size of the dictionary - as long as it fits in memory.
+
+### Key ordering depends on insertion order
+
+When a hash collision happens, the second key ends up in a position that it would not normally occupy if it has been inserted first. So, a ```dict``` built as ```dict([(key1, value1), (key2, value2)])``` compares equal to ```dict([(key2, value2), (key1, value1)])``` but their key ordering may not be the same if the hashes of ```key1``` and ```key2``` collide.
+
+### Adding items to a ```dict``` may change the order of existing keyso
+
+Whenever you add a new item to a dict, the Python interpreter may decide that the hash table of that dictionary needs to grow. This entails building a new, bigger hash table and adding all current items to the new table. During this process, new  ( but different ) hash collisions may happen, with the result that the keys are likely to be ordered differently in the new hash table. All of this is implementation-dependent, so you cannot reliably predict when it will happen. If you are iterating over the dictionary keys and changing them at the same time, your loop may not scan alll the items as expected-not even the items that were already in the dictionary before you added to it.
+
+This is why modifying the contents of a ```dict``` while iterating through it is a bad idea. If you need to scan and add items to a dictionary, do it in two steps: read the ```dict``` from start to finish and collect the needed additions in a second ```dict```. Then udpate the first one with it.
+
+In Python 3, the ```.keys()```, ```.items()``` and ```.values()``` methods return dictionary views, which behave more like sets than the lists returned by these methods in Python 2. Such views are also dynamic: they do not replicate the contents of the ```dict``` and they immediately reflect any change to the ```dict```.
+
+## How Sets Work - Practical Consequences
+
+```>```
+
+The ```set``` and ```frozenset``` types are also implemented with a hash table, except that each bucket holds only a reference to the element ( as if it were a key in a ```dict```, but without a value to go with it ). In fact, before ```set``` was added to the language, we often used dictionaries with dummy values just to perform fast membership tests on the keys.
+
+We can summarize sets in a few words:
+
+* Set elements must be hashable objects.
+* Sets have a significant memory overhead.
+* Membership testing is very efficient.
+* Element ordering depends on insertion order.
+* Adding elements to a set may change the order of other elements.
