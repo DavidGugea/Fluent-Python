@@ -770,3 +770,16 @@ We can summarize sets in a few words:
 * Membership testing is very efficient.
 * Element ordering depends on insertion order.
 * Adding elements to a set may change the order of other elements.
+
+# 4. Text versus Bytes
+
+## Character Issues
+
+It is very easy to define a string. A string is a sequence of characters. It's however hard to describe what a character is.
+
+The Unicode standards explicitly separates the identity of characters from specific bytes representations:
+
+* The identity of a character - its *code point* - is a number from 0 to 1.114.111 ( base 10 ), shown in the Unicode standard as 4 to 6 hexadecimal digits with a "U+" prefix. For example, the code point for the letter A is U+0041, the Euro sign is U+20AC and the musical symbol G clef is assigned to code point U+1D11E.
+* The actualy butes that represent a character depend on the *encoding* in use. ***An encoding is an algorithm that converts code point to byte sequences and vice versa***. The code point for A ( U+0041 ) is encoed as the single byte *\x41* in the UTF-8 encoding, or as the bytes *\x41\x00* in UTF-16LE encoding. As another example, the Euro sign ( U+20AC ) becomes three bytes in UTF-8 - *\xe\x82\xac* - but in UTF-16 it is encoded as two bytes: *\xac\x20*.
+
+> ***Converting from code points to bytes is encoding; converting from bytes to code points is decoding.***
