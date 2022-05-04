@@ -1311,3 +1311,218 @@ On Unix-derived platforms, these functions use the ```surrogateescape``` error h
 A trick to deal with unexpected bytes or unknown encodigns is the ```surrogateescape``` codec error handler described in PEP 383 - Non-decodable Bytes in System Character Interfaces introduced in Python 3.1.
 
 The idea of this error handler is to replace each nondecodable byte with a code point in the Unicode range from U+DC00 to U+DCFF that lies in the so-called "Low Surrogate Area" of the standard - a code space with no characters assigned, reserved for internal use in applications. On encoding, such code points are converted back to the byte values they replaced.
+
+# 5. First-Class Functions
+
+Functions in Python are first-class objects. A first class object is a program entity that can be:
+
+* Created at runtime
+* Assigned to a variable or element in a data structure
+* Passed as an argument to a function
+* Retruend as the result of a function
+
+> The term "first-class functions" is widely used as shorthand for "functions as first-class objects". It's not perfect because it seems to imply an "elite" among functions. In Python, all functions are first-class.
+
+## Treating a function like an object
+
+The function object itself is an instnance of the ```**function**``` class:
+
+```Python
+>>> def factorial(n):
+    """returns n!"""
+    return 1 if n < 2 else n * factorial(n - 1)
+>>> factorial(42)
+>>> factorial(42)
+1405006117752879898543142606244511569936384000000000
+>>> factorial.__doc__
+'returns n!'
+>>> type(factorial)
+<class 'function'>
+```
+
+## Higher-order functions
+
+***A function that takes a function as argument or returns a function as the result is a higher-order function.***
+
+## Modern replacements for map, filter and reduce
+
+The ```map``` and ```filter``` functions can be replaced by listcomps or genexps.
+
+Example:
+
+```Python
+def factorial(n):
+    """returns n!"""
+    return 1 if n < 2 else n * factorial(n - 1)
+
+>>> list(map(factorial, range(6)))
+[1, 1, 2, 6, 24, 120]
+>>> [factorial(n) for n in range(6)]
+[1, 1, 2, 6, 24, 120]
+>>> list(map(factorial, filter(lambda n: n % 2, range(6))))
+[1, 6, 120]
+>>> [factorial(n) for n in range(6) if n % 2 == 0]
+[1, 2, 24]
+```
+
+The functions ```map``` and ```filter``` return generators, which are a form of iterators. That means that they can be subsituted by genexps.
+
+The ```reduce``` function has been taken from the built-ins and put in the ```functools``` module.
+
+The other reducing built-ins are ```all``` and ```any```:
+
+* ```all(iterable)``` - Returns ```True``` if **every** element of the ```iterable``` is truthy; ```all([])``` returns ```True```.
+* ```any(iterable)``` - Returns ```True``` if **any** element of the ```iterable``` is truthy; ```any([])``` returns ```False```.
+
+## Anonymous Functions
+
+**The ```lambda``` keyword creates an anonymous function within a Python expression.**
+
+This syntax limits the body of the lambda functions since it can't make any assignments or use statements such as ```while```, ```try```, etc.
+
+> Lundh's lambda Refactoring Recipe
+> If you find a peice of code hard to understand because of a ```lambda```, Fredrik Lundh suggests this refactoring procedure:
+> 1. Write a comment explaining what the heck the ```lambda``` does.
+> 2. Study the comment for a while and think of a name that captures the essence of the comment.
+> 3. Convert the ```lambda``` to a ```def``` statement, using that name.
+> 4. Remove the comment.
+
+The ```lambda``` syntax is just syntactic sugar: a ```lambda``` expression creates a function object just liek the ```def``` statement.
+
+## The seven flavors of callable objects
+
+The Python Data Model documentation lists seven callable types:
+
+* **User-defined functions**
+    * Created with ```def``` statements or ```lambda``` expressions
+* **Built-in functions**
+    * A function implemented in C ( for CPython ), like ```len``` or ```time.strftime```.
+* **Built-in methods**
+    * Methods implemented in C, like ```dict.get```
+* **Methods**
+    * Functions defined in the body of a class
+* **Classes**
+    * When invoekd, a class runs its ```__new__``` method to create an instace, then ```__init__``` to initialize it and finally the instance is returned to the caller. Because there is no ```new``` operator in Python, calling a class is like calling a function. ( Usually calling a class creates an instance of the same class, but other behaviors are possible by overriding ```__new__``` ).
+* **Class instances**
+    * If a class defines a ```__call__``` method, then its instances may be invoked as functions
+* **Generator functions**
+    * Functions or methods that use the ```yield``` keyword. When called, generator functions return a generatorobject.
+
+You can check if something is callable in Python with the ```callable()``` method.
+
+## Function introspection
+
+```Python
+>>> class C: pass
+>>> obj = C()
+>>> def func(): pass
+>>> sorted(set(dir(func)) - set(dir(obj)))
+['__annotations__', '__builtins__', '__call__', '__closure__', '__code__', '__defaults__', '__get__', '__globals__', '__kwdefaults__', '__name__', '__qualname__']
+```
+
+|Name|Type|Description|
+|----|----|-----------|
+|```__annotations__```|```dict```|Parameter and return annotations|
+|```__call__```|```method-wrapper```|Implementation of the () operator; a.k.a. the callable object protocol|
+|```__closure__```|```tuple```|The function closure, i.e., bindings for free variables (often is ```None```)|
+|```__code__```|```code```|Function metaadta and function body compiled into bytecode|
+|```__defaults__```|```tuple```|Default values for the formal parameters|
+|```__get__```|```method-wrapper```|Implementation of the read-only descriptor protocol|
+|```__globals__```|```dict```|Global variable of the module where the function is defined|
+|```__kwdefaults__```|```dict```|Default values for the keyword-only formal parameters|
+|```__name__```|```str```|The function name|
+|```__qualname__```|```str```|The qualified function name, e.g. ```Random.choice``` ( see PEP-3155 )|
+
+## From positional to keyword-only parameters
+
+```>```
+
+To specify keyword-only arguments when defining a function, name them after the argument prefixed with ```*```. 
+If you don't want to support variable positional arguments but still want keyword-only arguments, put a ```*``` by itself in hte signature like this:
+
+```Python
+>>> def f(a, *b):
+        return a, b
+>>> f(1, b=2)
+(1, 2)
+```
+
+## Retrieving information about parameters
+
+```>```
+
+Within function object, the ```__defaults__``` attribute holds a tuple with the default values of positional and keyword arguments. The default for keyword-only arguments appear in ```__kwdefaults__```. The names of the arguments, however, are found within the ```__code__``` attribute, which is a reference to a ```code``` object with many attributes of its own.
+
+Example of ```__code__```:
+
+```Python
+def clip(text, max_len=80):
+    """Return text clipped at the last space before or after max_len"""
+    end = None
+    if len(text) > max_len:
+        space_before = text.rfind(' ', 0, max_len)
+        if space_before >= 0:
+            end = space_before
+        else:
+            space_after = text.rfind(' ', max_len)
+            if space_after >= 0:
+                end = space_after
+
+    if end is None:  # no space were found
+        end = len(text)
+
+    return text[:end].rstrip()
+
+
+if __name__ == '__main__':
+    print(clip.__defaults__)
+    print(clip.__code__)
+    print(clip.__code__.co_varnames)
+    print(clip.__code__.co_argcount)
+    print(set(dir(clip.__code__)) - set(dir(object)), indent=10)
+```
+
+It's very hard to use the ```__code__``` attribute but there is a better way: the ```inspect``` module.
+
+```Python
+sig = signature(clip)
+print(sig)
+print(str(sig))
+for name, param in sig.parameters.items():
+    print("{0} : {1} = {2}".format(
+        param.kind,
+        name,
+        param.default
+    ))
+
+"""
+OUTPUT:
+(text, max_len=80)
+(text, max_len=80)
+POSITIONAL_OR_KEYWORD : text = <class 'inspect._empty'>
+POSITIONAL_OR_KEYWORD : max_len = 80
+"""
+```
+
+```inspect.signature``` returns an ```inspect.Signature``` object, which has a ```parameters``` attribute that lets you read an ordered mapping of names to ```inspect.Parameter``` objects. Each ```Parameter``` instance has attributes such as ```name```, ```default``` and ```kind```. The special value ```inspect._empty``` denotes parameters with no defautl, which makes sense considering that ```None``` is a valid - and popular - default value.
+
+The ```kind``` attribute holds one of five possible values from the ```_ParameterKind``` class:
+
+* ```POSITIONAL_OR_KEYWORD```
+    * A parameter that may be passed as a positional or as a keyword argument
+* ```VAR_POSITIONAL```
+    * A ```tuple``` of positional parameters
+* ```VAR_KEYWORD```
+    * A ```dict``` or keyword parameters
+* ```KEYWORD_ONLY```
+    * A keyword-only parameter
+* ```POSITIONAL_ONLY```
+    * A positional-only parameter; currently unspported by Python function delcaration syntax, but exemplified by existing functions implemented in C - like ```div mod``` - taht do not accept parameters passed by keyword.
+
+Besides ```name```, ```default``` and ```kind```, ```inspect.Parameter``` objects have an ```annotation``` attribute that is usually ```inspect._empty``` but may contain function signature metadata provided via the new annotations syntax in Python 3.
+
+An ```inspect.Signature``` object has a ```bind``` method that takes any number of arguments and binds them to the parameters in the signature, applying the usual rules for matching actual arguments to formal parameters.
+
+## Function Annotations
+
+The only thing python does with annotations is to store them in the ```__annotations__``` property. It doesn't check them, enforce them, validate them or anything else. It completly ignores them. Annotations have no meaning to the Python interpreter. They are just metadata that may be used by tools such as IDEs, frameworks, decorators or type hinting tools such as ```mypy```.
