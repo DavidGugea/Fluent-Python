@@ -1526,3 +1526,83 @@ An ```inspect.Signature``` object has a ```bind``` method that takes any number 
 ## Function Annotations
 
 The only thing python does with annotations is to store them in the ```__annotations__``` property. It doesn't check them, enforce them, validate them or anything else. It completly ignores them. Annotations have no meaning to the Python interpreter. They are just metadata that may be used by tools such as IDEs, frameworks, decorators or type hinting tools such as ```mypy```.
+
+## Packages for functional programming
+
+### The ```operator``` module
+
+***The operator module provides function equivalents for arithmetic operators.***
+
+Example:
+
+```Python
+from functools import reduce
+from operator import mul
+
+
+def fact(n):
+    return reduce(mul, range(1, n + 1))
+```
+
+This module also provides you with the functions ```itemgetter``` and ```attrgetter```. They help you pick items from sequences or read attributes from objects.
+
+Because ```itemgetter``` uses the ```[]``` operator, it supports not only  sequences but also mappings and any class that implements ```__getitem__```.
+
+The ```attrgetter``` functions creates functions to extracts object attributes by name. If you pass ```attrgetter``` several attribute names as arguments, it also returns a tuple of values. In addition, if any argument name contains a ```.``` ( dot ) ```attrgetter``` navigates through nested objects to retrieve the attribute.
+
+There is also a ```methodcaller``` function that is similar to ```itemgetter``` and ```attrgetter```. It creates a function on the fly. The function it creates calls a method by name on the object given as argument:
+
+```Python
+>>> from operator import methodcaller
+>>> s = 'The time has come
+>>> upcase = methodcaller('upper')
+>>> upcase(s)
+'THE TIME HAS COME'
+>>> hiphenate = methodcaller('replace', ' ', '-')
+>>> hiphenate(s)
+'The-time-has-come'
+```
+
+Here is a list of functions defined in the ```operator``` module:
+
+```Python
+>>> import operator
+>>> [name for name in dir(operator) if not name.startswith("_")]
+['abs', 'add', 'and_', 'attrgetter', 'concat', 'contains', 'countOf', 'delitem', 'eq', 'floordiv', 'ge', 'getitem', 'gt', 'iadd', 'iand', 'iconcat', 'ifloordiv', 'ilshift', 'imatmul', 'imod', 'imul', 'index', 'indexOf', 'inv', 'invert', 'ior', 'ipow', 'irshift', 'is_', 'is_not', 'isub', 'itemgetter', 'itruediv', 'ixor', 'le', 'length_hint', 'lshift', 'lt', 'matmul', 'methodcaller', 'mod', 'mul', 'ne', 'neg', 'not_', 'or_', 'pos', 'pow', 'rshift', 'setitem', 'sub', 'truediv', 'truth', 'xor']
+```
+
+### Freezing arguments with functools.partial
+
+```>```
+
+```functools.partial``` is a higher-order function that allows partial application of a function. Given a function, a partial application produces a new callable with some of the arguments of the original function fixed. This is useful to adapt a function that takes one or more arguments to an API that requires a callback with fewer arguments.
+
+Example:
+
+```Python
+>>> from operator import mul
+>>> from functools import partial
+>>> triple = partial(mul, 3)
+>>> triple(7)
+21
+>>> list(map(triple, range(1, 10)))
+[3, 6, 9, 12, 15, 18, 21, 24, 27]
+```
+
+It is also very useful when working with unicode normalization:
+
+```Python
+>>> import unicodedata, functools
+>>> nfc = functools.partial(unicodedata.normalize, 'NFC')
+>>> s1 = 'café'
+>>> s2 = 'cafe\u0301'
+>>> s1, s2
+('café', 'café')
+>>> s1 == s2
+False
+>>> nfc(s1) == nfc(s2)
+True
+```
+
+The ```functools.partialmethod``` function does the same job as ```partial```, but is designed to work with methods.
+
