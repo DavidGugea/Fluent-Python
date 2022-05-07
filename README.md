@@ -1312,6 +1312,13 @@ A trick to deal with unexpected bytes or unknown encodigns is the ```surrogatees
 
 The idea of this error handler is to replace each nondecodable byte with a code point in the Unicode range from U+DC00 to U+DCFF that lies in the so-called "Low Surrogate Area" of the standard - a code space with no characters assigned, reserved for internal use in applications. On encoding, such code points are converted back to the byte values they replaced.
 
+---
+
+# Part III - Functions as Objects
+
+---
+
+
 # 5. First-Class Functions
 
 Functions in Python are first-class objects. A first class object is a program entity that can be:
@@ -1606,3 +1613,704 @@ True
 
 The ```functools.partialmethod``` function does the same job as ```partial```, but is designed to work with methods.
 
+# 7. Function Decorators and Closures
+
+## Decorators 101
+
+**A decorator is a callable that takes another functions as argument ( the decorated function ). The decorator can perform some prcoessing with the decorated functions and returns it or replaces it with another function or callable object.**
+
+Example:
+
+```Python
+@decorate
+def target():
+    print("running target()")
+```
+
+Is the same as:
+
+```Python
+def target():
+    print("running target()")
+
+target = decorate(target)
+```
+
+The results are the same.
+
+Example of a real decorator:
+
+```Python
+def deco(func):
+    def inner():
+        print("runnig inner()")
+
+    return inner
+
+
+@deco
+def target():
+    print("running target")
+
+
+target()
+print(target)
+```
+
+As you can see, decorators are just syntactical sugar since you can easily implement the concept of a decorator by just calling the decorator function and pass in the function that you want to decorate.
+
+## When python executes decorators
+
+Python executes decorators when the module is loaded. Decorators run exactly after the decorated function is deifined. They run at *import time* ( i.e. when a module is being loaded )
+
+Example:
+
+```Python
+registry = []
+
+
+def register(func):
+    print("running register {0}".format(func))
+    registry.append(func)
+    return func
+
+
+@register
+def f1():
+    print("running f1()")
+
+
+@register
+def f2():
+    print("running f2()")
+
+
+def f3():
+    print("running f3()")
+
+
+def main():
+    print("running main()")
+    print("registry -- > {0}".format(registry))
+    f1()
+    f2()
+    f3()
+
+
+if __name__ == '__main__':
+    main()
+
+"""
+Output:
+
+
+running register <function f1 at 0x00000261BD1AEEF0>
+running register <function f2 at 0x00000261BD1AEF80>
+running main()
+registry -- > [<function f1 at 0x00000261BD1AEEF0>, <function f2 at 0x00000261BD1AEF80>]
+running f1()
+running f2()
+running f3()
+"""
+```
+
+This is how it looks like if the module is being imported:
+
+```Python
+>>> import registration
+running register <function f1 at 0x00000261BD1AEEF0>
+running register <function f2 at 0x00000261BD1AEF80>
+>>> registration.registry
+[<function f1 at 0x00000261BD1AEEF0>, <function f2 at 0x00000261BD1AEF80>]
+```
+
+Only the decorators are executed when the module is being imported, not the decorates functions too. The decorated functions only run when they are invoked, just like normal functions that are not decorated.
+
+A real decorator is usually defined in one module and applied to functions in other modules. Most decortaors define an inner function and return it, rather than returning the function that was given as an argument.
+
+## Variable Scope Rules
+
+In order to understand closures, you must first understand the variable scope rules.
+Take a look at the following example:
+
+```Python
+def f1(a):
+    print(a)
+    print(b)
+
+
+f1(5)
+
+"""
+Output:
+5
+Traceback (most recent call last):
+...
+NameError: name 'b' is not defined
+"""
+```
+
+As you can see, I've tried to access a variable that doesn't exist inside the function ```f1```. This is what happens when I build a global variable b:
+
+```Python
+def f1(a):
+    print(a)
+    print(b)
+
+b = 10
+f1(5)
+
+"""
+Output:
+
+5
+10
+"""
+```
+
+Now it works because the function ```f1``` is accessing the global variable ```b``` from the outside.
+
+Now look at this example:
+
+```Python
+def f1(a):
+    print(a)
+    print(b)
+    b = 10
+
+
+b = 10
+f1(5)
+
+"""
+Output:
+5
+Traceback (most recent call last):
+...
+UnboundLocalError: local variable 'b' referenced before assignment
+"""
+```
+
+We get an ```UnboundLocalError``` because Python sees that you've built the variable b inside the function ```f1``` so it hoists that variable at the top of the function, so it knows that it exists but it doesn't have a value since it's value is given to the variable ```b``` after the ```print(b)``` statement. So you get the error because Python ignores the global variable ```b``` since you have a local variable ```b``` that it hoists and then when you try to print the variable ```b``` Python can't do it because no values have been assigend to the variable yet.
+
+If we want the variable to interpret ```b``` as a global value then we must use the ```global``` statement:
+
+```Python
+def f1(a):
+    global b
+    print(a)
+    print(b)
+    b = 10
+
+
+b = 10
+f1(5)
+
+"""Output:
+5
+10
+"""
+```
+
+If we compare bytescodes, this is what it looks like for the first function:
+
+```Python
+def f1(a):
+    print(a)
+    print(b)
+
+
+b = 10
+f1(5)
+```
+
+The bytecode:
+
+```Python
+>>> from dis import dis
+>>> dis(f1)
+  4           0 LOAD_GLOBAL              0 (print)
+              2 LOAD_FAST                0 (a)
+              4 CALL_FUNCTION            1
+              6 POP_TOP
+
+  5           8 LOAD_GLOBAL              0 (print)
+             10 LOAD_GLOBAL              1 (b)
+             12 CALL_FUNCTION            1
+             14 POP_TOP
+             16 LOAD_CONST               0 (None)
+             18 RETURN_VALUE
+```
+
+Here is the bytecode for the example with ```global```:
+
+```Python
+def f1(a):
+    global b
+    print(a)
+    print(b)
+    b = 15
+
+
+b = 10
+f1(5)
+```
+
+Here is the bytecode:
+
+```Python
+>>> from dis import dis
+>>> dis(f1)
+  5           0 LOAD_GLOBAL              0 (print)
+              2 LOAD_FAST                0 (a)
+              4 CALL_FUNCTION            1
+              6 POP_TOP
+
+  6           8 LOAD_GLOBAL              0 (print)
+             10 LOAD_GLOBAL              1 (b)
+             12 CALL_FUNCTION            1
+             14 POP_TOP
+
+  7          16 LOAD_CONST               1 (15)
+             18 STORE_GLOBAL             1 (b)
+             20 LOAD_CONST               0 (None)
+             22 RETURN_VALUE
+```
+
+> The CPython VM that runs the bytecode is a stack machine, so the operations *```LOAD```* AND *```POP```* refer to the stack.
+
+## Closures
+
+A closure in Python is just like a closure in JS. It holds variables from the closed stack frame that it came from as a return value.
+
+> A closure is a function with an extended scope thatn encompasses nongloba variables referenced in the body of the function but not defined there. It does not matter wheter the function is anonymous or not; what matters is that it can access nonglobal variables that are defined outside its body.
+
+Here is the example of a closure:
+
+```Python
+def make_averager():
+    series = []
+
+    def averager(new_value):
+        series.append(new_value)
+        total = sum(series)
+        return total / len(series)
+
+    return averager
+
+
+if __name__ == '__main__':
+    avg = make_averager()
+    print(avg(10))
+    print(avg(11))
+    print(avg(12))
+
+"""
+Output:
+10.0
+10.5
+11.0
+"""
+```
+
+The ```series``` variable from the ```make_averager()``` is a local variable inside that function but when the ```make_averager()``` function returned the ```averager(new_value)``` function, its local scope has been gone since there is no stack frame left for it.
+
+The ```series``` variable is a so called ***free variable***. This is a technical term meaning a **variable that is not obound in the local scope**.
+
+The closure is the local scope of the function ```make_averager``` and the ```series``` variable is considerd a **free variable** inside the function ```averager```.
+
+You can check for freevars and varnames inside the ```__code__``` property. You can also check for the closure inside the ```__closure__``` property:
+
+```Python
+def make_averager():
+    series = []
+
+    def averager(new_value):
+        series.append(new_value)
+        total = sum(series)
+        return total / len(series)
+
+    return averager
+
+
+if __name__ == '__main__':
+    avg = make_averager()
+    print(avg(10))
+    print(avg(11))
+    print(avg(12))
+
+    print(avg.__code__.co_varnames)
+    print(avg.__code__.co_freevars)
+    print(avg.__closure__)
+    print([x.cell_contents for x in avg.__closure__])
+
+"""
+Output:
+('new_value', 'total')
+('series',)
+(<cell at 0x000001CCC99A3BE0: list object at 0x000001CCC998B400>,)
+[[10, 11, 12]]
+"""
+```
+
+> The binding for ```series``` is kept in the ```__closure__``` attribute of the returned function ```avg```. Each item in ```avg.__closure__``` corresponds to a name in ```avg.__code__.co_freevars```. These items are ```cells``` and they have an attribute called ```cell_contents``` where the actual value can be found.
+
+## The nonlocal declaration
+
+Here is a way of improving our ```make_averager()``` function.
+From this:
+
+```Python
+def make_averager():
+    series = []
+
+    def averager(new_value):
+        series.append(new_value)
+        total = sum(series)
+        return total / len(series)
+
+    return averager
+```
+
+We can do this:
+
+```Python
+def make_averager():
+    count = 0
+    total = 0
+
+    def averager(new_value):
+        count += 1
+        total += new_value
+
+        return total / count
+```
+
+The problem that we get here is the same problem that we've received in the ```f1``` function:
+
+```Python
+Traceback (most recent call last):
+...
+UnboundLocalError: local variable 'count' referenced before assignment
+```
+
+We didn't have this problem with the previous ```make_averager()``` because we didn't assigned anything to the ```series``` name, we only called ```series.append```.
+
+**But with immutable types like numbers, strings, tuple, etc., all you can do is read, but never update.**
+In our example, we wrote ```count += 1``` which is actually ```count = count + 1```. In this case, you are creating a local variable ```count```. It is no longer a **free variable**, as it should be, because we want to use the closure, so therefore it is not saved in the closure.
+
+> The ```nonlocal``` declaration lets you flag a variable as a free varaible even when it is assigned a new value withing the function. If a new value is assigned to a ```nonlocal``` variable, the binding stored in the closure is changed.
+
+So this is how we can implement ```make_averager()``` correctly:
+
+```Python
+def make_averager():
+    count = 0
+    total = 0
+
+    def averager(new_value):
+        nonlocal count, total
+
+        count += 1
+        total += new_value
+
+        return total / count
+
+    return averager
+```
+
+## ```functools.wraps```
+
+The typical behavior of a decorator is to take in the function that it is given and replace the decorated function with a new function that (usually) accepts the same arguments and return whatever the decorated function was supposed to return.
+
+The problem with most decorators is that they mask the ```__name__``` and ```__doc__``` properties of the decorated function. In order to prevent this, you can use the ```functools.wraps(func)``` function:
+
+```Python
+import functools
+
+def decorator(func):
+    @functools.wraps(func)
+    def inner(*args, **kwargs):
+        print("Before")
+        func(*args, **kwargs)
+        print("After")
+
+    return inner
+```
+
+Now, the function ```func``` that will be given to the decorator ```decorator``` won't lose it's ```__name__``` and ```__doc__```.
+
+## Decorators in the standard library
+
+### Memoization with ```functools.lru_cache```
+
+```>```
+
+The decorator ```functools.lru_cache``` implements memoization: an optimization technique that works by saving the results of previous invocations of an expensive function, avoiding repeat computations on previously used arguments. The letter LRU stand for Least Recently Used, meaning that the growth of the cache is limited by discarding the entries that have not been read for a while.
+
+Example of a clock decorator:
+
+```Python
+import time
+
+
+def clock(func):
+    def clocked(*args):
+        t0 = time.perf_counter()
+        result = func(*args)
+        elapsed = time.perf_counter() - t0
+
+        name = func.__name__
+        arg_str = ', '.join(repr(arg) for arg in args)
+        print('[%0.8fs] %s(%s) -> %r' % (elapsed, name, arg_str, result))
+
+        return result
+
+    return clocked
+```
+
+Now this is what the implementation of that looks like:
+
+```Python
+from clockdeco import clock
+
+
+@clock
+def fibonacci(n):
+    if n < 2:
+        return n
+
+    return fibonacci(n - 2) + fibonacci(n - 1)
+
+
+if __name__ == '__main__':
+    print(fibonacci(6))
+
+"""
+Output:
+[0.00000030s] fibonacci(0) -> 0
+[0.00000030s] fibonacci(1) -> 1
+[0.00003980s] fibonacci(2) -> 1
+[0.00000020s] fibonacci(1) -> 1
+[0.00000030s] fibonacci(0) -> 0
+[0.00000020s] fibonacci(1) -> 1
+[0.00001410s] fibonacci(2) -> 1
+[0.00002780s] fibonacci(3) -> 2
+[0.00008170s] fibonacci(4) -> 3
+[0.00000020s] fibonacci(1) -> 1
+[0.00000020s] fibonacci(0) -> 0
+[0.00000020s] fibonacci(1) -> 1
+[0.00002040s] fibonacci(2) -> 1
+[0.00003420s] fibonacci(3) -> 2
+[0.00000020s] fibonacci(0) -> 0
+[0.00000020s] fibonacci(1) -> 1
+[0.00001370s] fibonacci(2) -> 1
+[0.00000010s] fibonacci(1) -> 1
+[0.00000020s] fibonacci(0) -> 0
+[0.00000020s] fibonacci(1) -> 1
+[0.00001400s] fibonacci(2) -> 1
+[0.00002970s] fibonacci(3) -> 2
+[0.00005730s] fibonacci(4) -> 3
+[0.00010470s] fibonacci(5) -> 5
+[0.00020010s] fibonacci(6) -> 8
+8
+
+Process finished with exit code 0
+"""
+```
+
+Now this is how you can reduce the number of executions for the recursive function, using ```functools.lru_cache()```:
+
+```Python
+import functools
+from clockdeco import clock
+
+
+@clock
+@functools.lru_cache()
+def fibonacci(n):
+    if n < 2:
+        return n
+
+    return fibonacci(n - 2) + fibonacci(n - 1)
+
+
+if __name__ == '__main__':
+    print(fibonacci(6))
+
+"""
+Output:
+
+[0.00000060s] fibonacci(0) -> 0
+[0.00000060s] fibonacci(1) -> 1
+[0.00004250s] fibonacci(2) -> 1
+[0.00000020s] fibonacci(1) -> 1
+[0.00000010s] fibonacci(2) -> 1
+[0.00001430s] fibonacci(3) -> 2
+[0.00007130s] fibonacci(4) -> 3
+[0.00000010s] fibonacci(3) -> 2
+[0.00000010s] fibonacci(4) -> 3
+[0.00001380s] fibonacci(5) -> 5
+[0.00009960s] fibonacci(6) -> 8
+8
+"""
+```
+
+The ```maxsize``` argument determines how many call results are stored. After the cache is full, older results are discarded to make room. For optimal performance, ```maxsize``` should be a power of 2. The ```typed``` argument, if set to ```True```, stores results of different argument types separately, i.e., distinguishin between float and integer arguments that are normally considered equal, like 1 and 1.0. Because ```lru_cache``` uses a ```dict``` to store the results and the keys are made from the positional and keyword arguments used in the calls, **all the arguments taken by the decorated function must be hashable**.
+
+### Generic funcitions with single dispatch
+
+Let's take a look at the the following function:
+
+```Python
+import html
+
+
+def htmlize(obj):
+    content = html.escape(repr(obj))
+    return '<pre>{}</pre>'.format(content)
+
+
+if __name__ == '__main__':
+    print(htmlize({1, 2, 3}))
+    print(htmlize(abs))
+    print(htmlize('Heimlihc & Co.\n- a game'))
+    print(htmlize(42))
+    print(htmlize(['alpha', 66, {3, 2, 1}]))
+
+"""
+Output:
+
+<pre>{1, 2, 3}</pre>
+<pre>&lt;built-in function abs&gt;</pre>
+<pre>&#x27;Heimlihc &amp; Co.\n- a game&#x27;</pre>
+<pre>42</pre>
+<pre>[&#x27;alpha&#x27;, 66, {1, 2, 3}]</pre>
+"""
+```
+
+Now, let's say that we want the output of the function to depend on the types of data that the function is taking in as an argument. Because we don't have method or function overlaoding in Python. So we can't create variations of ```htmlize``` with different signatures for each data type we want to handle differently. A solution for this problem would be to either build an ```if/elif/elif...``` chain where we handle each data type in these ```if/elif``` statement or build multiple functions like ```htmlize_str```, ```html_int```, etc. The problem with this would be that we wouldn't be able to keep track of each function, we might forget that we didn't add a function for a certain data type and the ```if/elif``` chain might get way too long.
+
+```>```
+
+This is where ```functools.singledispatch``` helps us.
+
+The new ```functools.dispatch``` decorator in Python 3.4 allows each module to contribute to the overall solution and lets you easiliy provide a specizlied function even for classes taht you can't edit. If you decorate a plain function with ```@singledispatch```, it beomces a *generic function*: a group of functions to perform the same operation in different ways, depending on the type of the first argument ( This is what is meant by the term single-dispatch. If more arguments were used to select the specific functions, we'd have a multiple-dispatch ).
+
+Example:
+
+```Python
+import html
+import numbers
+from functools import singledispatch
+from collections import abc
+
+
+@singledispatch
+def htmlize(obj):
+    content = html.escape(repr(obj))
+    return '<pre>{}</pre>'.format(content)
+
+
+@htmlize.register(str)
+def _(text):
+    content = html.escape(text).replace("\n", "<br>\n")
+    return "<p>{0}</p>".format(content)
+
+
+@htmlize.register(numbers.Integral)
+def _(n):
+    return "<pre>{0} (0x{0:x})</pre>".format(n)
+
+
+@htmlize.register(tuple)
+@htmlize.register(abc.MutableSequence)
+def _(seq):
+    inner = "<li>\n</li>".join(htmlize(item) for item in seq)
+    return "<ul>\n<li>" + inner + ("</li>\n</ul>")
+
+
+if __name__ == '__main__':
+    print(htmlize({1, 2, 3}))
+    print(htmlize(abs))
+    print(htmlize('Heimlihc & Co.\n- a game'))
+    print(htmlize(42))
+    print(htmlize(['alpha', 66, {3, 2, 1}]))
+
+"""
+Output:
+<pre>{1, 2, 3}</pre>
+<pre>&lt;built-in function abs&gt;</pre>
+<p>Heimlihc &amp; Co.<br>
+- a game</p>
+<pre>42 (0x2a)</pre>
+<ul>
+<li><p>alpha</p><li>
+</li><pre>66 (0x42)</pre><li>
+</li><pre>{1, 2, 3}</pre></li>
+</ul>
+"""
+```
+
+When possible, register the specialized functions to handle ABCs (abstract classes) such as ```numbers.Integral``` and ```abc.MutableSequence``` instead of concrete implementations like ```int``` and ```list```. This allows your code to support a greater variety of comptabile types. For example, a Python extension can provide alternatives to the ```int``` type with fixed bit lengths as subclasses of ```numbers.Integral```.
+
+Using ABCs for type checking allows your code to support existing or future classes that are either actual or virtual subclasses of those ABCs.
+
+A notable quality of the ```singledispatch``` mechanism is that you can register specialized functions anywhere in the system, in any module. If you later add a module with a new user-defined type, you can easily provide a new custom function to handle that type. And you can write custom functions for clases that you did not write and can't change.
+
+```@singledispatch``` is not designed to bring Java-style method overloading to Python. A single class with many overloaded variations of a method is better than a single function with a lengthy stretch of ```if/elif/elif/elif``` blcoks. But both solutions are flaws because they concentrate too much responsibility in a single code unit-the class or the function. The advantage of ```@singledispatch``` is supporting modular extension: each module can register a specialized function for each type it supports.
+
+## Stacked Decorators
+
+Stacked decorators work just like stacked functions:
+
+```Python
+@d1
+@d2
+def f():
+    print('f')
+```
+
+is the same as:
+
+```Python
+def f():
+    print('f')
+
+f = d1(d2(f))
+```
+
+## Parameterized Decorators
+
+In order to make a parameterzied decorator you must make a decorator factory that takes those arguments and returns a decorator, which is then applied to the function to be decorated.
+
+Example:
+
+```Python
+registry = set()
+
+def register(active=True):
+    def decorate(func):
+        print('running register(active=%s) -> decorate(%s)' % (active, func))
+
+        if active:
+            registry.add(func)
+        else:
+            registry.discard(func)
+
+        return func
+
+    return decorate
+
+
+@register(active=False)
+def f1():
+    print('running f1()')
+
+@register()
+def f2():
+    print('running f2()')
+
+def f3():
+    print('running f3()')
+```
