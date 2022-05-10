@@ -2314,3 +2314,281 @@ def f2():
 def f3():
     print('running f3()')
 ```
+
+---
+
+# Part IV - Object-Oriented Idioms
+
+---
+
+# 8. Object References, Mutability and Recycling
+
+> ***Variables are labels, not boxes***
+
+## Variables are not boxes
+
+Take a look at the following example:
+
+```Python
+>>> class Gizmo:
+        def __init__(self):
+            print("Gizmo id: {0}".format(id(self)))
+>>> x = Gizmo()
+Gizmo id: 2512773658560
+>>> y = Gizmo() * 10
+Gizmo id: 2512774566368
+Traceback (most recent call last):
+  File "<pyshell#9>", line 1, in <module>
+    y = Gizmo() * 10
+TypeError: unsupported operand type(s) for *: 'Gizmo' and 'int'
+>>> dir()
+['Gizmo', '__annotations__', '__builtins__', '__doc__', '__loader__', '__name__', '__package__', '__spec__', 'x']
+>>> [i for i in dir() if not i.startswith("__")]
+['Gizmo', 'x']
+```
+
+As you can see, even if we don't have a variable pointing to the ```Gizmo()``` object that was created, we still have it in memory. This is why we say that variables are labels, not boxes.
+
+> ***Because variables are mere lables, nothing prevents an object from having several labels assigned to it. When that happens, you have aliasing.***
+
+## Identity, Equality and Aliases
+
+Take a look at the following example:
+
+```Python
+>>> charles = {'name': 'Charles L. Dodgson', 'born': 1832}
+>>> lewis = charles
+>>> lewis is charles
+True
+>>> id(charles), id(lewis)
+(2767009580544, 2767009580544)
+>>> lewis['balance'] = 950
+>>> charles
+{'name': 'Charles L. Dodgson', 'born': 1832, 'balance': 950}
+```
+
+In this example, lewis and charles are aliases. ***Aliases are two variables bound to the same object.***
+
+In *The Python Language Reference* "3.1. Objects, values and types" states:
+
+> Every object has an indeitity, a type and a value. An object's identity never changes once it has been created; you may think of it as the object's address in memory. The ```is``` operator compares the identity of two objects; the ```id()``` function returns an integer representing its identity.
+
+An object's id is implementation-dependent. In CPython, ```id()``` returns the memory address of an object but it could be something else inside the interpreter. It depends on the environment. The key is that ```id()``` returns a unique numeric label and it will never change during the life-time of the object.
+
+## Chosing between ```==``` and ```is```
+
+> ***The ```==``` operator comapres the values of object ( the data they hold ), while ```is``` compares their identities.
+
+So if two objects have the same value, ```==``` will return ```True``` and if two objects are actually the same object, if they have the same address in memory, ```is``` will return ```True```.
+
+The ```is``` operator is faster than ```==``` because it cannot be overloaded and Python just has two compare its memory address and it doesn't have to find special methods that must be executed. Besides, you change the behavior of ```=``` by implementing a ```__eq__``` method.
+
+## The relative immutability of tuples
+
+Tuples are containers that hold references to objects. The reference type,  if possible, can change and the tuple will still remain the same. The immutablity of tuples referes to the contents of the tuple, not to the immutability of its values (i.e. if you have a list inside the tuple, that list is allowed to change, without you changing the tuple, since the pointer inside the tuple points to the same list inside the memory).
+
+Example:
+
+```Python
+>>> t1 = (1, 2, [30, 40])
+>>> t2 = (1, 2, [30, 40])
+>>> t1 == t2
+True
+>>> id(t1[-1])
+3221356204160
+>>> t1[-1].append(99)
+>>> t1
+(1, 2, [30, 40, 99])
+>>> id(t1[-1])
+3221356204160
+>>> t1 == t2
+False
+```
+
+The tuple ```t1``` is immutable, but the list inside of it isn't. The list inside of it is allowed to change without the tuple itself changing.
+
+Here is the memory before appending something to the list inside the ```t1``` tuple:
+
+![](ScreenshotsForNotes/Chapter8/relative_immutability_1.PNG)
+
+Here is the memory afterwards:
+
+![](ScreenshotsForNotes/Chapter8/relative_immutability_2.PNG)
+
+You can see that, while the contents of the list inside the tuple have changed, the pointer inside the tuple hasn't, since it's pointing to the same list. However, since the contents of the two tuples ```t1``` and ```t2``` aren't the same, ```t1==t2``` will return ```False```.
+
+## Copies are shallow by default
+
+The easiest way to copy a list is to use the built-in constructor for the type itself:
+
+```Python
+>>> l1 = [3, [55, 44], (7, 8, 9)]
+>>> l2 = list(l1)
+>>> l2
+[3, [55, 44], (7, 8, 9)]
+>>> l2 == l1
+True
+>>> l2 is l1
+False
+```
+
+The copies are equal, but refer to two different objects.
+Let's take a look at the memory:
+
+![](ScreenshotsForNotes/Chapter8/shallow_list_copy.PNG)
+
+As you can see, there are two objects built, so the lists are not the same, which makes sense. However, the pointers inside the objects, point to the same internal list and tuple.
+
+You can also copy mutable sequences using the ```[:]``` operator, so ```l2 = l1[:]```.
+
+However, using ```[:]``` produces a shallow copy. A shallow copy means that only the outermost container will be copied, but the rest of the references inside the list will point to the same objects in memory ( just like we've seen above ). This saves a lot of memory and doesn't cause any problems, *iff the objects are immutable*. However, if they are mutable, we can get into bugs that are very hard to solve.
+
+Example of another shallow copy with lists:
+
+```Python
+>>> l1 = [3, [66, 55, 44], (7, 8, 9)]
+>>> l2 = list(l1)
+>>> l1.append(100)
+>>> l1[1].remove(55)
+>>> print('l1: {0}'.format(l1))
+l1: [3, [66, 44], (7, 8, 9), 100]
+>>> print('l2: {0}'.format(l2))
+l2: [3, [66, 44], (7, 8, 9)]
+>>> l2[1] += [33, 22]
+>>> l2[2] += (10, 11)
+>>> print('l1: {0}'.format(l1))
+l1: [3, [66, 44, 33, 22], (7, 8, 9), 100]
+>>> print('l2: {0}'.format(l2))
+l2: [3, [66, 44, 33, 22], (7, 8, 9, 10, 11)]
+```
+
+As you can see in the following diagram depicting the memory, the list ```l2``` is nothing but a shallow copy of ```l1```:
+
+![](ScreenshotsForNotes/Chapter8/l2_is_shallow_copy.PNG)
+
+A new list has been created for ```l2```, however, the last 2 pointers inside the list haven't been pointed to new references that have been copied, they have been pointed to the same objects that were in ```l1``` as well.
+
+Appending 100 to ```l1``` has no effect since ```l1``` and ```l2``` are references to two different objects, however, once you remove ```55``` from the list inside ```l1```, you can see that the changes are made inside the ```l2``` list as well. The changes are not really *made*, they are just there, since the pointer to the list from ```l2``` points to the same object as the pointer to the list from ```l1```. So every change that is made to list inside ```l1``` can be seen inside the list of ```l2``` since they are the same list.
+The same goes when something is added to the list in ```l2```. Those changes can be seen in the ```l1``` list as well, as you can see from ```l2[1] += [33, 22]```.
+**However, when we add something to the tuple using ```+=``` we are actually creating a new tuple**. This means that the pointer ```l2[2]``` is rebounded to a newly made object in memory.
+
+Here is the memory of the program when it finishes:
+
+![](ScreenshotsForNotes/Chapter8/shallow_list_copy_2.PNG)
+
+The diagram above depicts the final state in memory of ```l1``` and ```l2```.
+You can see that the pointer of the tuple has been rebounded to a new tuple inside the memory since the operator ```+=``` builds a new tuple.
+
+## Deep and shallow copies of arbitrary objects
+
+Sometimes, especially when working with primitive data types, shallow copies are all you need, but sometimes, you might need to make a deep copy (i.e, duplicates that do not share references of embedded objects).
+
+You can use the ***```copy```*** module which provides the ```copy``` and ```deepcopy``` functions that return shallow and deep copies of arbitrary objects.
+
+In some cases, a deep copy might be to deep. If you are internally working with a Singleton, you will never want that Singleton for example to be copied, you would want your copied pointer to the Singleton, to point to the exact same Singleton in memory. You can control the way objects are copied by using the ```__copy__``` and ```__deepcopy__``` methods.
+
+Here is an example of how the ```copy``` module works:
+
+```Python
+import copy
+
+
+class Bus:
+    def __init__(self, passengers=None) -> None:
+        if passengers is None:
+            self.passengers = []
+        else:
+            self.passengers = list(passengers)
+
+    def pick(self, name) -> None:
+        self.passengers.append(name)
+
+    def drop(self, name) -> None:
+        self.passengers.remove(name)
+        
+
+bus1 = Bus(["Alice", "Bill", "Claire", "David"])
+bus2 = copy.copy(bus1)
+bus3 = copy.deepcopy(bus1)
+
+print(id(bus1), id(bus2), id(bus3))
+
+bus1.drop("Bill")
+print(bus2.passengers)
+
+print(id(bus1.passengers), id(bus2.passengers), id(bus3.passengers))
+
+print(bus3.passengers)
+
+"""
+Output:
+
+140348097540224 140348098546488 140348098021864
+['Alice', 'Claire', 'David']
+140348097583624 140348097583624 140348098026248
+['Alice', 'Bill', 'Claire', 'David']
+"""
+```
+
+The following is a diagram depicting the memory right after the initialization of the 3 busses, *before* ```bus1.drop("Bill")```:
+
+![](ScreenshotsForNotes/Chapter8/bus_shallow_deep_copy_example_1.PNG)
+
+As you can see, by making a shallow copy, the object ```bus2``` is has a pointer that points to the same list of passengers as ```bus1```.
+
+![](ScreenshotsForNotes/Chapter8/bus_shallow_deep_copy_example_2.PNG)
+
+## Function parameters as references
+
+In Python there is only pass by sharing or pass by object which means that according to the object it will changes it value i.e. depending if it is mutable or not but you will not be able to change the type of the object.
+
+> The only mode of paramter passing in Python is ***call by sharing***.
+
+> Call by sharing means that each formal parameter of the function gets a copy of each reference in the arguments. In other words, the parameters inside the function become aliases of the actual arguments.
+
+> The result of this scheme is that a function may change any mutable object passed as a parameter, but it cannot change hte identity of those objects (i.e., it cannot altogether replace an object with another)
+
+Example:
+
+```Python
+def f(a, b):
+    a += b
+    return a
+
+
+if __name__ == '__main__':
+    x = 1
+    y = 2
+    print("-"*50)
+    print(f(x, y))
+    print(x, y)
+
+    a = [1, 2]
+    b = [3, 4]
+    print("-"*50)
+    print(f(a, b))
+    print(a, b)
+
+    t = (10, 20)
+    u = (30, 40)
+    print("-"*50)
+    print(f(t, u))
+    print(t, u)
+
+"""
+Output:
+--------------------------------------------------
+3
+1 2
+--------------------------------------------------
+[1, 2, 3, 4]
+[1, 2, 3, 4] [3, 4]
+--------------------------------------------------
+(10, 20, 30, 40)
+(10, 20) (30, 40)
+"""
+```
+
+Here is a diagram depicting the memory in the last moment:
+
+![](ScreenshotsForNotes/Chapter8/call_by_sharing_example.PNG)
