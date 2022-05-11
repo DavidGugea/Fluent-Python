@@ -2592,3 +2592,295 @@ Output:
 Here is a diagram depicting the memory in the last moment:
 
 ![](ScreenshotsForNotes/Chapter8/call_by_sharing_example.PNG)
+
+## Mutable types as parameter defaults is a bad idea
+
+> ***You should avoid mutable objects as default values for parameters.***
+
+The reason for this is that the mutable object that is set as a default value is built in memory when the module is loaded. That means that every object that will be built will point to the same default mutable sequence in memory, which is, in most cases, not what you want.
+
+Take a look at the following example:
+
+```Python
+class HauntedBus:
+    """A bus model haunted by ghost passengers"""
+
+    def __init__(self, passengers=[]) -> None:
+        self.passengers = passengers
+
+    def pick(self, name) -> None:
+        self.passengers.append(name)
+
+    def drop(self, name) -> None:
+        self.passengers.remove(name)
+
+
+if __name__ == '__main__':
+    bus1 = HauntedBus(["Alice", "Bill"])
+    print(bus1.passengers)
+    bus1.pick("Charlie")
+    bus1.drop("Alice")
+    print(bus1.passengers)
+
+    bus2 = HauntedBus()
+    bus2.pick("Charlie")
+    print(bus2.passengers)
+
+    bus3 = HauntedBus()
+    print(bus3.passengers)
+    bus3.pick("Dave")
+    print(bus2.passengers)
+    print(bus2.passengers is bus3.passengers)
+    print(bus1.passengers)
+
+"""
+Output:
+
+['Alice', 'Bill']
+['Bill', 'Charlie']
+['Charlie']
+['Charlie']
+['Charlie', 'Dave']
+True
+['Bill', 'Charlie']
+"""
+```
+
+You can see that the ```bus3.passengers``` is not empty after building the ```bus3``` instance since the pointer to the ```passengers``` list points to the same list in memory. 
+
+The following diagram depicts the last state of the memory:
+
+![](ScreenshotsForNotes/Chapter8/haunted_bus_shared_default_mutable_sequences.PNG)
+
+
+```self.passengers``` becomes an alias for the default value of the ```passengers``` parameter. **The problem is that each default value is evaluted when the function is deifined i.e. usually when the module is loaded.**
+
+This is how you can verify the alias:
+
+```Python
+>>> HauntedBus.__init__.__defaults[0] is bus2.passengers
+True
+```
+
+## Defensive programming with mutable parameters
+
+As previously seen, it is not a good idea to set mutable values are your default parameters. In order to solve this problem, you can implement the default sequence inside the method, so that the objects won't have pointers directing to the same default mutable sequence in memory:
+
+```Python
+class TwilightBus:
+    """A bus model that makes passengers vanish"""
+
+    def __init__(self, passengers=None) -> None:
+        if passengers is None:
+            self.passengers = []
+        else:
+            self.passengers = passengers
+
+    def pick(self, name) -> None:
+        self.passengers.append(name)
+
+    def drop(self, name) -> None:
+        self.passengers.remove(name)
+```
+
+The only problem that we might have with this is that the ```self.passengers = passengers``` assignment makes the pointer ```self.passengers``` point to the exact same object passed. In our case we might want to change it to point to a different list inside the memory that just has different values. We can change this by building a shallow list of the passed in object:
+
+```Python
+if passengers is None:
+    self.passengers = []
+else:
+    self.passengers = list(passengers)
+```
+
+> Unless a method is explicitly intended to mutate an object received as argument, you should think twice before aliasing the argument object by simply assigning it to an instance variable in your class. If in doubt, make a copy.
+
+## ```del``` and garbage collection
+
+The operator ```del``` doesn't actually remove objects from memory. What it actually does it, it removes references that point to a specific object in memory. In CPython, the garbage collection algorithm works by counting the number of references that point to a certain object. So if there are no more references that point to an object, then the object is deleted. We call that object unreachable, therefore we delete it. An object can also become unreachable if it only works if another object is referenced in memory and if that object is deleted, then the object gets deleted as well.
+
+After an object is deleted in Python, the ```__del__``` method, if implemented, is called.
+
+```>```
+
+***The ```del``` statement deletes name, not objects.***
+
+An object may be garbage collected as a result of a ```del``` command, but only if the variable deleted holds the last reference to the object, or if the object becomes unreachable ( if two objects refer to each other, they may be destroyed if the garabeg collection determines that they are otherwise unreachable because their only references are their mutual references ). Rebinding a variable may also cause the number of references to an object to reach 0, causing its destruction.
+
+There is a ```__del__``` special method, but it does not cause the disposal of the instance, and should not be called by your code. ```__del__``` is invoked by the Python interpreter when the instance is about to be destroyed to give it a chance to release external resources.
+
+***In CPython, the primary algorithm for garbage collection is reference counting.***
+
+Essentially, each object keeps count of how many references point to it. As soon as the *refcount* reaches 0, the object is immediately destroyed: CPython calls the ```__del__``` method on the object ( if defined ) and then frees the memory allocated to the object. In CPython, 2.0, a generational garbage collection algorithm was added to detect groups of objects involved in reference cycles - which may be unreachable even with outstanding references to them, when all the mutual references are contained within the group. Other implementations of Python have more sophisticated garbage collectors that do not rely on reference counting, which means the ```__del__``` method may not be called immediately when there are no more references to the object.
+
+The following is an example showing that objects are deleted when there are no more references pointing to them:
+
+```Python
+s1 = {1, 2, 3}
+s2 = s1
+
+def deleted():
+    print("The object got deleted")
+
+ender = weakref.finalize(s1, deleted)
+print(ender.alive)
+del s1
+print(ender.alive)
+s2 = 'spam'
+print(ender.alive)
+```
+
+## Weak references
+
+As previously mentioned, the number of references to an object is vital for its lifetime. If an object has no references attached to it, it is deleted by the garbage collector.
+
+There are cases, however, where you might want to have a reference to an object, but not a stong reference. A strong reference is a reference that stops the object from getting deleted. However, you might need a so called weak reference in some cases. A weak reference is just like an observer. It doesn't add up to the reference count of the object, meaning that if all strong references to that object get deleted, the weak reference will point to ```None```. 
+
+To summarize:
+
+A weak reference is something like a normal reference ( strong-reference ) but it doesn't add up to the reference count. It works like an observer. If the object's reference count reaches 0, the weak reference will point to ```None```.
+
+The following section is from the book.
+
+```>```
+
+The presence of references is what keeps an object alive in memory. When the reference count of an object reaches 0, the garbage collector disposes of it. But sometimes it is useful to have a reference to an object that does not keep it around longer than necessary. **A common use case is a cache.**
+
+***Weak references to an object do not increase its reference count.***
+***The object that is the target of a reference is called the referent.*** 
+Therefore, we say that a *weak reference* does not prevent the *referent* from being garbage collected.
+
+Example:
+
+```Python
+import weakref
+
+a_set = {0, 1}
+wref = weakref.ref(a_set)
+print(wref)
+print(wref())
+a_set = {2, 3, 4}
+print(wref())
+print(wref() is None)
+
+"""
+Output:
+
+<weakref at 0x0000019B684B57B0; to 'set' at 0x0000019B684AE6C0>
+{0, 1}
+None  
+True  
+True 
+"""
+```
+
+Invoking ```wref()``` returns the referenced object.
+
+The ```weakref``` module documentation maeks the point that the ```weakref.ref``` class is actually a low-level interface intended for advanced uses, and that most programs are better served by the use of the ```weakref``` collections and ```finalize```. In other words, consider using ```WeakKeyDictionary```, ```WeakValueDictionary```, ```WeakSet``` and ```finalize``` ( which use weak references internally ) instead of creating and handling your own ```weakref.ref``` instances by hand. But in practice, most of the time Python programs use the ```weakref``` collections.
+
+## The WeakValueDictionary Skit
+
+The ```WeakValueDictionary``` is just like a normal dictionary. The only difference is that the keys are weak references to certain objects and once the objects get deleted, the item in the dictionary, where the value now points to ```None```, is deleted.
+
+```>```
+
+The class ```WeakValueDictionary``` implements a mutable mapping where the values are weak reference to objects. When a referred object is garbage collection elsewhere in the program, the corresponding key is automatically removed from ```WeakValueDictionary```. 
+**This is commonly used for caching.**
+
+```Python
+class Cheese:
+    def __init__(self, kind):
+        self.kind = kind
+
+    def __repr__(self):
+        return 'Cheese(%r)' % self.kind
+
+
+if __name__ == '__main__':
+    import weakref
+
+    stock = weakref.WeakValueDictionary()
+    catalog = [
+        Cheese('Red Leicester'),
+        Cheese('Tilsit'),
+        Cheese('Brie'),
+        Cheese('Parmesan'),
+    ]
+
+    for cheese in catalog:
+        stock[cheese.kind] = cheese
+
+    print(sorted(stock.keys()))
+    del catalog
+    print(sorted(stock.keys()))
+    del cheese
+    print(sorted(stock.keys()))
+
+
+"""
+Output:
+
+['Brie', 'Parmesan', 'Red Leicester', 'Tilsit']
+['Parmesan']
+[]
+"""
+```
+
+You can see, in print statement in the middle : ```['Parmesan']```. We still have a value left and that is because of the for loop which holds a reference to the last variable in the list, more specifically the ```cheese``` variable from ```for cheese in catalog``` is a pointer to the last element from the list, therefore it didn't get deleted.
+
+A temporary variable may cause an object to last longer than expected by holding a reference to it. This is usually not a problem with local variables: they are destroyed when the function returns. But in the example above, the ```for``` loop variable ```cheese``` is a gloval variable and will never go away unless explicitly deleted.
+
+A counterpart to the ```WeakValueDictionary``` is the ```WeakKeyDictionary``` in which the keys are weak references. The ```weakref.WeakKeydictionary``` documentation hints on possible uses:
+
+> [A ```WeakKeyDictionary```] can be used to associated additional data with an object owned by other parts of an application without adding attributes to those objects. This cna be especially useful with objects that override attribute accesses.
+
+The ```weakref``` module also provides a ```WeakSet```, simply described in the docs as "Set class that keeps weak references to its elements. An element will be discarded when no strong reference to it exists any more." If you need to build a class that is aware of every one of its instances, a good solution is to create a class attribute with a ```WeakSet``` to hold the references to the instances. Otherwise, if a regular ```set``` was used, the instances would never be garbage collectted, because the class itself would have strong references to them, and classes live as long as the Python process unless you deliberately delete them.
+
+*These collections, and weak references in general, are limited in the kinds of objects they can handle.*
+
+## Limitations of weak references
+
+Not every Python object may be the target, or referent, of a weak reference. 
+
+***Basic ```list``` and ```dict``` instances may not be referents, but a plain subclass of either can solve this problem easily:***
+
+```Python
+class MyList(list):
+    """list subclass whose instances may be weakly referenced"""
+
+a_list = MyList(range(10))
+
+# a_list can be the raget of a weak reference
+wref_to_a_list = weakref.ref(a_list)
+```
+
+A ```set``` instnace can be a referent. User-defined types can also be referents. ```int``` and ```tuple``` instances however, cannot be targets of weak reference, even if subclasses of those types are created.
+
+Most of these limitations are implementation details of CPython that may not applly to other Python interpreters.
+
+## Tricks Python plays with immutables
+
+```>```
+
+The next section discusses some Python implenetation details that are not really important for *users* of Python. They are shortcuts and optimizations done by the CPython core developers, which should not bother you when using the language, and that may not apply to other Python implementations or even future version of CPython. Nevertheless, while experimenting with aliases and copies you may stumbled upon these tricks, so I felt they were worth mentioning.
+
+For a tuple, ```t```, ```t[:]``` does not make a copy, but returns a reference to the same object. You also get a reference to the same tuple if you write ```tuple(t)```. If the argument is a tuple, the return value is the same object.
+
+A tuple built from antoher is actually the same exact tuple:
+
+```Python
+t1 = (1, 2, 3)
+t2 = tuple(t1)
+print(t2 is t1) # True
+t3 = t1[:]
+print(t3 is t1) # True
+```
+
+```t1```, ```t2``` and ```t3``` are bound to the same object.
+
+The same behavior can be observed with instances of ```str```, ```bytes```, and ```frozenset```. ```fs.copy()``` has the same effect: it cheats and returns a reference to the same object, and not a copy at all.
+
+The sharing of string literals is an optimizations technique called *interning*. CPython uses the same technique with small integers to avoid unecessary duplication of "popular" numbers like 0, -1, and 42. Note that CPython does not intern all strings or integers, and the criteria it uses to do so is an undocumented implementation detail.
+
+Interning is a feature for internal use of the Python interpreter.
+
+The tricks discussed in this section, including the behavior of ```frozenset.copy()``` are "white lies"; they save memory and make the interpreter faster. Do not worry about them, they should not give you any trouble becuase they only apply to immutable types.
