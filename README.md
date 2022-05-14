@@ -2884,3 +2884,122 @@ The sharing of string literals is an optimizations technique called *interning*.
 Interning is a feature for internal use of the Python interpreter.
 
 The tricks discussed in this section, including the behavior of ```frozenset.copy()``` are "white lies"; they save memory and make the interpreter faster. Do not worry about them, they should not give you any trouble becuase they only apply to immutable types.
+
+# 9. A Pythonic Object
+
+> "Never, ever use two leading undescores. This is annoyingly private." - Ian Bicking, Creator of *pip*, *virtualenv*, *Paste* and *many* other projects
+
+Thanks to the Python data model, your user-defined types can behave as naturally as the built-in types. And this can be accomplished without inheritance, in the spirit of *duck typing*: you must implemented hte methods needed for your objects to behave as expected.
+
+## Object representations
+
+```>```
+
+Every object-oriented language has at least one standard way of getting a string representation from any object. Python has two:
+
+* ```repr()```
+    * Return a string representing the object as the developer wants to see it.
+* ```str()```
+    * Return a string representing the object as the user wants to see it.
+
+As you know, we implement the special methods ```__repr__``` and ```__str__``` to support ```repr()``` and ```str()```.
+
+There are two additional special methods to support alternative representations of objects: ```__bytes__``` and ```__format__```. The ```__bytes__``` method is analogous to ```__str__```: it's called by ```bytes()``` to get the object represented as a byte sequence. Regarding ```__format__```, both the built-in function ```format()``` and the ```str.format()```` method call it to get string displays of objects using special formatting codes.
+
+## ```classmethod``` Versus ```staticmethod```
+
+```>```
+
+```classmethod``` is used to define a method that operators on the class and not on instances. ```classmethod``` changes the way the method is called, so it receives the calss itself as the first argument, instead of an instance. Its most common use is for alternative constructors, like ```frombytes```.
+By convention, the first parameter of a class method should be named ```cls``` (but Python doesn't care how it's named).
+
+In contrats, the ```staticmethod``` decorator changes a method so that it receives no special first argument. In essence, a static method is just like a plain function that happens to live in a calss body, instead of being defined at the module level.
+
+```Python
+class Demo:
+    @classmethod
+    def classmeth(*args):
+        return args
+
+    @staticmethod
+    def statmeth(*args):
+        return args
+
+
+if __name__ == '__main__':
+    print(Demo.classmeth())
+    print(Demo.classmeth('spam'))
+
+    print(Demo.statmeth())
+    print(Demo.statmeth('spam'))
+
+"""
+Output:
+
+(<class '__main__.Demo'>,)
+(<class '__main__.Demo'>, 'spam')
+()
+('spam',)
+"""
+```
+
+No matter how you invoke it, ```Demo.calssmeth``` receives the ```Demo``` class as the first argument.
+
+## Private and "protected" attributes in Python
+
+```>```
+
+Consider this scenario: someone wrote a calss named ```Dog``` that used a ```mood``` instance attribute interally, without exposing it. You need to subcalss ```Dog``` as ```Beagle```. If you create your own ```mood``` instance attribute without being aware of the name clash, you will clobber the ```mood``` attribute used by the methods inherited from ```Dog```. This would be a pain to debug.
+
+To prevent this, if you name an instance attribute in the form ```__mood``` ( two leading underscores and zero or at most one trailing underscore), Python stores the name in the instance ```__dict__``` prefixed with a leading underscore and the class name, so in the ```Dog``` calss, ```__mood``` becomes ```_Dog__mood```, and in ```Beagle``` it's ```_Beagle__mood``. This language feature goes by the name of *name mangling*.
+
+***Name mangling is about safety, not security: it's designed to prevent accidental access and not intentional wrongdoing.***
+
+Anyone who knows how private names are mangled can read the private attribute directly.
+
+This is the full quote from the prolific Ian Bicking, cited at the beginning of this chapter:
+
+> Never, ever use two leading underscores. This is annoyingly private. If name clashes are a concern, use explicit name mangling instead (e.g., ```_MyThing_blahblah```). This is essentially the same thing as double-underscore, only it's transparent where double underscore obscures.
+
+The single underscores prefix has no special meaning to the Python interpreter when sed in attribute names, but it's a very storng convention among Python programmers that you should not access such attributes from outside the class. It's easy to respect the privacy of an object that makrs its attrbitues with a single ```_```, just as it's easy to respect the  convention that variables in ```ALL_CAPS``` should be treated as constants.
+
+In modules, a single ```_``` in front of a top-level name does have an effect: if you write ```from mymod import *``` the names with a ```_``` prefix are not impoted from ```mymod```. However, you can still write ```from mymod import _privatefunc```. This is explained in the Python Tutorial, seciton 6.1.
+
+Attributes with a single ```_``` prefix are called *"protected"* in some corners of the Python documentation. The practice of "protecting" attributes by convention with the form ```self._x``` is widespread, but calling that a "protected" attribute is not so common. Some even call that a "private" attribute.
+
+## Saving space with the ```__slots__``` class attribute
+
+```>```
+
+By default, Python stores instance attributes in a per-instance ```dict``` named ```__dict__```. Dictionaries have a signification memory overhead because of the underlying hash table used to provide fast access. If you are dealing with millions of instances with few attributes, the ```__slots__``` class attribute can save a lot of memory, by letting the interpreter store the instance attributes in a ```tuple``` instaed of a ```dict```.
+
+> A ```__slots__``` attribute inherited from a superclass has no effect. Python only takes into account ```__slots__``` attributes defined in each calss individually.
+
+To define ```__slots__```, you create a class attribute with that name and assign it an iterable of ```str``` with identifiers for the instnace attributes. I like to use a ```tuple``` for that, because it conveys the message that the ```__slots__``` definition cannot change.
+
+Exmaple:
+
+```Python
+class Vector:
+    __slots__ = ("x", "y")
+
+    # methods
+```
+
+By defining ```__slots__``` in the class, you are telling the interpreter: "These are all the instance attributes in this class." Python then stores them in a tuple-like strucutre in each instance, avoiding the memory overhead of the per-instance ```__dict__```. This can make a huge difference in memory usage if you have millions of instnaces active at the same time.
+
+When ```__slots__``` is specified in a calss, its instnaces will not be allowed to have any other attributes apart from those name in ```__slots__```. This is really a side effect, anod not the reason why ```__slots__``` exists. It's considered bad form to use ```__slots__``` just to prevent users of your class from creating new attributes in the instnaces if they want to. ***```__slots__``` should be used for optimizations, not for programmer restraint.***
+
+It may be possible, however, to "save memory and eat it too": if you add the ```__dict__``` name to the ```__slots__``` list, your instnaces will keep attributes named in ```__slots__``` in the per-instnace tuple, but will also support dynamically created attributes, which will be stored in the usual ```__dict__```. Of coures, having ```__dict__``` in ```__slots__``` may entirely defeat its purpose, depending on the number of static and dynamic attributes in each instance nad how they are used. ***Careless optimization is even worse than premature optimization.***
+
+There is another special per-instance attribute that you may want to keep: the ```__weakref__``` attribute is necessary for an object to support weak references. That attribute is present by default in instances of user-define classes. However, if the class defines ```__slots__```, and you need the instances to be targets of weak references, then you need to include ```__weakref__``` among the attributes named in ```__slots__```.
+
+### The problem with ```__slots__```
+
+The ```__slots__``` class attribute may provide significant memory saving if properly used, but htere are a few caveats:
+
+* You must remember to redeclare ```__slots__``` in each subclass, because the inherited attribute is ignore by the interpreter.
+* Instances will only be able to have the attributes listed in ```__slots__```, unless you inlcude ```__dict__``` in ```__slots__``` (but doing so may negate the memory savings).
+* Instances cannot be targets of weak references unless you remember to include ```__weakref__``` in ```__slots__```.
+
+If your program is not handling millions of instnaces, it's probably not worth the trouble of creating a somewhat unusual and tricky class whose instances may not accept dyanmic attributes or may not support weak references. Like any optimization, ```__slots__``` should be used only if justified by a present need and when its benefit is proven by careful profiling.
