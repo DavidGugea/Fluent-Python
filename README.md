@@ -3003,3 +3003,58 @@ The ```__slots__``` class attribute may provide significant memory saving if pro
 * Instances cannot be targets of weak references unless you remember to include ```__weakref__``` in ```__slots__```.
 
 If your program is not handling millions of instnaces, it's probably not worth the trouble of creating a somewhat unusual and tricky class whose instances may not accept dyanmic attributes or may not support weak references. Like any optimization, ```__slots__``` should be used only if justified by a present need and when its benefit is proven by careful profiling.
+
+# 10. Sequence Hacking, Hashing, and Slicing
+
+> "Don't check wheter it *is*-a duck: check wheter it *quacks*-like-a duck, *walks*-like-a duck, etc, etc, depending on exactly what subset of duck-like behavior you need to play oyur language-games with." - Alex Martelli, (*comp.lang.python, Jul.26, 2000*)
+
+## User defined sequence types
+
+It is important to make sure that for every collection type that may contain a large number of items, since ```repr``` is used for debugging, use the ```reprlib``` module to produce limited-length representations. You don't want a single large object to psan across thousands of lines in your console or log files.
+
+```Python
+import reprlib
+
+print(reprlib.repr(x))
+```
+
+```>```
+
+That function produces safe representations of large or recusrive structures by limiting the length of the output string and marking the cut with ```'...'```. You want, for example, the ```repr``` of a Vector to look like ```Vector([3.0, 4.0, 5.0])``` and not ```Vector(array('d', [3.0, 4.0, 5.0]))```, because the fact that there is an ```array``` inside a Vector is an implementation detail. Because there constructor calls build identical ```Vector``` objects, I prefer the simpler syntax using a ```list``` argument.
+
+***Because of its role in debugging, calling ```repr()``` on an object should never raise an exception.*** If something goes wrong inside your implementation of ```__repr__```, you must deal with the issue and do your best to produce some serviceable output that gives the user a chance of identifying the target object.
+
+## Protocols and duck typing
+
+```>```
+
+***In the context of object-oriented programming, a protocol is an informal interface, define only in documentation and not in code.*** 
+
+For example, the sequence protocol in Python entails just the ```__len__``` and ```__getitem__``` methods. Any class ```Spam``` that implements those methods with the standard signature and semantics can be used anywhere a sequence is expected. Wheter ```Spam``` is a subclass of this or that is irrelevant; all that matters is that it provides the necessary methods.
+
+```Python
+import collections
+
+Card = collections.namedtuple('Card', ['rank', 'suit'])
+
+
+class FrenchDeck:
+    ranks = [str(n) for n in range(2, 11)] + list("JQKA")
+    suits = 'spades diamonds clubs hearts'.split()
+
+    def __init__(self):
+        self._cards = [Card(rank, suit) for suit in self.suits
+                                        for rank in self.ranks]
+
+    def __len__(self):
+        return len(self._cards)
+
+    def __getitem__(self, position):
+        return self._cards[position]
+```
+
+The ```FrenchDeck``` class takes advantage of many Python facilities because it implements the sequence protocol, even if that is not declared anywhere in the code.
+
+***We say that it is a sequence because it behaves like one, and that is what matters. This became known as duck typing.***
+
+**Because protocls are informal and unenforced, you can often get away with implementing just part of a protocol, if you know the specific ocntext where a class will be used. For example, to support iteration, only ```__getitem__``` is required; there is no need to provide ```__len__```.**
