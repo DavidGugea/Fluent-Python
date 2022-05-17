@@ -3058,3 +3058,296 @@ The ```FrenchDeck``` class takes advantage of many Python facilities because it 
 ***We say that it is a sequence because it behaves like one, and that is what matters. This became known as duck typing.***
 
 **Because protocls are informal and unenforced, you can often get away with implementing just part of a protocol, if you know the specific ocntext where a class will be used. For example, to support iteration, only ```__getitem__``` is required; there is no need to provide ```__len__```.**
+
+# 11. Interfaces: From Protocols to ABCs
+
+> ABCs, like descriptors and metacalsses, are tools for building frameworks. Therefore, only a very small minority of Python developers can create ABCs without imposing unreasonable limitations and needless work on fellow programmers.
+
+## Interfaces and protocols in python culture
+
+```>```
+
+A useful complementary ***definition of interface*** is: ***the subset of an object's public methods that enable it to play a specific role in the system.***
+
+That's what is implied when the Python documentation mentions *"a file-like object"* or *"an interable"*, without specifying a class.
+
+***Protocols are independent of inheritance.***
+***A class may implement several protocols, enabling its instances to fulfill several roles.***
+
+***Protocols are interfaces, but because they are informal - defined only by documentation and conventions-protocols cannot be enforced like formal interfaces can.***
+
+***A protocol may e partially implemneted in a particular class, and that's OK.***
+
+Sometimes all a specific API requires from a *"file-like object"* is that it has a ```.read()``` method that reutnrs bytes. The remaining file methods may or may not be relevant in the context.
+
+*"X-like object"*, *"X protocol"* and *"X interface"* are synonyms.
+
+## Python Digs Sequences
+
+***The philosophy of the Python data model is to cooperate with essential protocols as much as possible.***
+
+Thsi is how the formal ```Sequence``` interface is defined as an ABC:
+
+![Sequence defined as an ABC](ScreenshotsForNotes/Chapter11/sequence_as_ABC.PNG)
+
+Python gives a special treatment to anything that resembles a sequence. Iteration in Python represents an extreme fomr of duck typing sine the interpreter tries two different methods to iterate over objects.
+
+## Monkey-Patching to implement a protocol at runtime
+
+> *monkey-patching*: ***changing a class or module at runtime, without touching the source code.***
+> *duck-typing*: ***operating with objects regardless of their types, as long as they implement certain protocols.***
+
+> When you follow established protocols, you improve your chances of leveraging existing standard library and third-party code, thanks to duck typing.
+
+
+Here is an example of monkey patching. Take a look at the following ```FrenchDeck``` class:
+
+```Python
+import collections
+
+Card = collections.namedtuple("Card", ["rank", "suit"])
+
+
+class FrenchDeck:
+    ranks = [str(n) for n in range(2, 11)] + list("JQKA")
+    suits = 'spades diamonds clubs hearts'.split()
+
+    def __init__(self):
+        self._cards = [Card(rank, suit) for suit in self.suits
+                       for rank in self.ranks]
+
+    def __len__(self):
+        return len(self._cards)
+
+    def __getitem__(self, position):
+        return self._cards[position]
+```
+
+Now take a look at this code:
+
+```Python
+>>> from FrenchDeck import FrenchDeck
+>>> from random import shuffle
+>>> deck = FrenchDeck()
+>>> shuffle(deck)
+Traceback (most recent call last):
+...
+TypeError: 'FrenchDeck object does not support item assignment
+```
+
+The error that you get is very straight-forward. The french deck doesn't allows you to insert items. Since you can't change the source code in this sitatuation, you use monkey-patching to add a new method to the class at runtime:
+
+```Python
+>>> def set_card(deck, position, card):
+        deck._cards[position] = card
+>>> FrenchDeck.__setitem__ = set_card
+>>> shuffle(deck)
+>>> deck[:5]
+[...]
+```
+
+You have to remember the ```self``` argument, which doesn't have to be named ```self``` since in our case we named it ```deck```. After building the ```set_card``` method, we assigned it to be the ```__setitem__``` method from the ```FrenchDeck```.
+
+## Alex Martelli's Waterfowl
+
+```>```
+
+***goose typing means: ```isinstance(obj, cls)``` is now just fine... as long as ```cls``` is an abstract base class- in other words, ```cls```'s metaclass is ```abc.ABCMeta```***.
+
+You can find many useful existing abstract classes in ```collections.abc``` ( and additional ones in the ```numbers``` module of *The Python Standard Library*).
+
+Python's ABCs add one major practical advantage: the ***```register```*** class method, which lets end-user code "declare" that a certain class becomes a "virtual" subclass of an ABC (for this purpose the registered class must meet the ABC's method name and signature requirements, and more importantly the underlying semantci contract- but it need not have been developed with any awareness of the ABC, and in particular need not inherit from it!). This goes a long way toward breaking the rigidity and strong coupling that make inheritance something to use with much more caution than typically practice by most OOP programmers...
+
+Sometimes you don't even need to register a class for an ABC to recognize it as a subclass!
+That's the case for the ABCs whose eesence boils down to a few special methods. For example:
+
+```Python
+>>> class Struggle:
+...    def __len__(self): return 23
+...
+>>> from collections import abc
+>>> isinstance(Struggle(), abc.Sized)
+True
+```
+
+As you can see, ```abc.Sized``` recognized ```Struggle``` as "a subclass" with no need for registration, as implementing the special method named ```__len__``` is all it takes.
+
+Besides coining the "goose typing", Alex makes the point that inheriting from an ABC is more than implementing the required methods: it's also a clera declaration of intent by the developer. That intent can also be made explicit through registering a virtual subclass.
+
+In addition, the use of ```isinstance``` and ```issubclass``` becomes more acceptable to test against ABCs. In the past, these functions worked against duck typing, but with ABCs they become more flexible. After all, if a component does not implement an ABC by subclassing it, it can always be registered after the fact so it passes those explicit type checks.
+
+However, even with ABCs, you should beware that excessive use of ```isinstance``` checks may be a *code smell* - a symptom of bad OO design. It's usually *not* OK to have a chain of *if/elif/elif* with *isinstance* checks performing different actions depending on the type of an object: you should be useing polymorphism for that - i.e., designing your classes so that the interpreter disptaches calls to the proper methods, instead of you hardcoding the dispatch logic in *if/elif/elif* blocks.
+
+On the other hand, it's usually OK to perform an ```isinstance``` check against an ABC if you must enforce an API contract: "Dude, you have to implement this if you want to call me,". That's particularly useful in systems that have a plug-in architecture. Outside of frameworks, duck typing is often simpler and more flexible than type checks.
+
+Alex wrote:
+
+> ABCs are meant to encapsulate very general concepts, abstractions, introduced by a framework - things like "a sequence" and "an exact number". [Readers] most likely don't need to write any new ABCs, just use existing ones correctly, to get 99.9% of the benefits without serious risk of misdesign.
+
+## Subclassing an ABC
+
+Take a look at the following class:
+
+```Python
+import collections
+
+Card = collections.namedtuple("Card", ["rank", "suit"])
+
+
+class FrenchDeck2(collections.MutableSequence):
+    ranks = [str(n) for n in range(2, 11)] + list("JQKA")
+    suits = 'spades diamonds clubs hearts'.split()
+
+    def __init__(self):
+        self._cards = [Card(rank, suit) for suit in self.suits
+                       for rank in self.ranks]
+
+    def __len__(self):
+        return len(self._cards)
+
+    def __getitem__(self, position):
+        return self._cards[position]
+
+    def __setitem__(self, position, value):
+        self._cards[position] = value
+
+    def __delitem__(self, position):
+        del self._cards[position]
+
+    def insert(self, position, value):
+        self._cards.insert(position, value)
+```
+
+Since we are subclassing ```collections.MutableSequence``` we are forced to implement ```__delitem__``` and ```insert```.
+
+> ***Python does not check for the implementation of the abstract methods at import time (when the module is loaded and compiled), but only at runtime when we actually try to instantiate the class.***
+
+If we don't implement the abstract methods, we get a ```TypeError```. It doesn't matter if the ```__delitem__``` and ```insert``` methods have no functionality, they must be implemented.
+
+This is how the ```MutableSequence``` looks like:
+
+![MutableSequence with ABCS UML-Diagram](ScreenshotsForNotes/Chapter11/mutablesequence_with_abcs.png)
+
+## ABCs in the Standard Library
+
+```>```
+
+### ABCs in ```collections.abc```
+
+The following diagrams represent the ABCs inside the ```collections.abc``` module:
+
+![Collections ABC 1](ScreenshotsForNotes/Chapter11/collections_abc_1.png)
+![Collections ABC 2](ScreenshotsForNotes/Chapter11/collections_abc_2.png)
+
+A review of the clusters:
+
+* ```Iterable```, ```Container``` and ```Sized```
+    * Every collection should either inherit from these ABCs or at least implement comptaible protocols. ```Iterable``` supports iteration with ```__iter__```, ```Container``` supports the ```in``` operator with ```__contains__```, and ```Sized``` supports ```len()``` with ```__len__```.
+* ```Sequence```, ```Mapping``` and ```Set```
+    * These are the main immutable collection types, and each has a mutable subclass.
+* ```MappingView``` 
+    * In Python 3, the objects returned from the mapping methods ```.items()```, ```.keys()```, and ```.values()``` inherit from ```ItemsView```, ```KeysView```, and ```ValuesView```, respectively. The first two also inherit the rich interface of ```Set```.
+* ```Callable``` and ```Hashable```
+    * These ABCs are not so closely related to collections, but ```collections.abc``` was the first package to define ABCs in the standard library, and these two were demed important enough to be included. Their main use is to support the ```isinstance``` built-in as a safe way of determining wheter an object is callable or hashable. For callable detection, there is the ```callable()``` built-in function - but there is no equivalent ```hashable()``` function, so ```isinstance(my_obj, Hashable)``` is the preferred way to test for a hashable object.
+* ```Iterator```
+    * Note that iterator subclasses ```Iterable```.
+
+### The number towers of ABCs
+
+The ```numbers``` package defines the so-called *"numerical tower"*, where ```Number``` is the topmost superclass, ```Complex``` is its immedaite subclass, and so on, down to ```Integral```:
+
+* ```Number```
+* ```Complex```
+* ```Real```
+* ```Rational```
+* ```Integral```
+
+So if you need to check for an integer, use ```isinstance(x, numbers.Integral)``` to accept ```int```, ```bool``` ( which subclasses ```int``` ) or other integer types that mya be provided by external libraries that register their with the ```numbers``` ABCs. And to satisfy your check, you or the users of your API may always register any compatible type as a virtual subclass of ```numbers.Integral```.
+
+If, on the other hand, a value can be a floating-point type, you write ```isinstance(x, numbers.Real)```, and your code will happily take ```bool```, ```int```, ```float```, ```fractions```. ```Fraction```, or any other noncompelx numerical type provided by an external library, such as ```NumPy```, which is suitably registered.
+
+## Building a virtual subclass
+
+***An essential characteristic of goose typing is the ability to register a class as a ```virtual subclass``` of an ABC, even if it does not inherit from it.***
+
+By building a virtual subclass you are not inheriting from a class but what you are actually doing is promising that a class implements the interface defined in the ABC and python will believe you without checking. If something goes wrong, you'll get a runtime exception.
+
+***This is done by calling a ```register``` method on the ABC. The registered class then becomes a virtual subclass of the ABC, and will be recognized as such by functions like ```issubclas``` and ```isinstance````, but it will not inherit any methods or attributes from the ABC.***
+
+The ```register``` method can be either used as a normal function or as a decorator.
+
+> Virtual subclasses do not inherit from their registered ABCs, and are not checked for conformance to the ABC interface at any time, not even when they are instantiated. It's up to the subcalss to actually implement all the methods needed to avoid runtime errors.
+
+An example:
+
+![](ScreenshotsForNotes/Chapter11/implementing_a_registered_virtual_class.png)
+
+```Python
+from random import randrange
+from Tombola import Tombola
+
+
+@Tombola.register
+class TomboList(list):
+    def pick(self):
+        if self:
+            position = randrange(len(self))
+            return self.popo(position)
+        else:
+            raise LookupError('pop from empty TomboList')
+
+    load = list.extend
+
+    def loaded(self):
+        return bool(self)
+
+    def inspect(self):
+        return tuple(sorted(self))
+
+# Tombola.register(TomboList)
+```
+
+There is also a special method and an attribute that you can use to test subclasses and registries:
+
+* ```__subclasses__()```
+    * Method that returns a list of the immediate subclasses of the calss. The list does not include virtual subclasses.
+* ```_abc_registry```
+    * Data attribute - available only in ABCs - that is bound to a ```WeakSet``` with weak references to registered virtual subclasses of the abstract class.
+
+## Geese can behave as ducks
+
+```>```
+
+In his *Waterfowl* and ABCs essay, Alex shows that a class can be recognized as a virtual subclass of an ABC even without registration. Here is his example again, with an added test using issubclass
+
+```Python
+>>> class Struggle:
+...    def __len__(self): return 23
+...
+>>> from collections import abc
+>>> isinstance(Struggle(), abc.Sized)
+True
+>>> isinstance(Struggle, abc.Sized)
+True
+```
+
+Class ```Struggle``` is considered a subclass of ```abc.Sized``` by the ```issubclass``` function (and, consequently, by ```isinstance``` as well) because ```abc.Sized``` implement a special class method named ```__subclasshook__```.
+
+Abstract base calsses can override the ```__subclasshook__``` method to customize the behavior of ```issubclass```.
+
+```Python
+class Sized(metaclass=ABCMeta):
+    __slots__ = ()
+
+    @abstractmethod
+    def __len__(self):
+        return 0
+
+    @classmethod
+    def __subclasshook__(cls, C):
+        if cls in Sized:
+            if any("__len__" in B.__dict__ for B in c.__mro__):
+                return True
+
+        return NotImplemented
+```
