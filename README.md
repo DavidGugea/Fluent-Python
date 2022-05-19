@@ -3351,3 +3351,178 @@ class Sized(metaclass=ABCMeta):
 
         return NotImplemented
 ```
+
+# 12. Inheritance: For Good or For Worse
+
+## Subclassing Built-In Types Is Tricky
+
+Take a look at the following example. Our ```__setitem__``` override is ignored by the ```__init__``` and ```__update``` methods of the built-in dict:
+
+```Python
+class DoppelDict(dict):
+    def __setitem__(self, key, value):
+        super().__setitem__(key, [value] * 2)
+
+
+if __name__ == '__main__':
+    dd = DoppelDict(one=1)
+    print(dd)
+    dd['two'] = 2
+    print(dd)
+    dd.update(three=3)
+    print(dd)
+
+"""
+Output:
+
+{'one': 1}
+{'one': 1, 'two': [2, 2]}
+{'one': 1, 'two': [2, 2], 'three': 3}
+"""
+```
+
+Here is another example where the ```__getitem__``` method is bypassed by ```dict.update```:
+
+```Python
+class AnswerDict(dict):
+    def __getitem__(self, key):
+        return 42
+
+if __name__ == '__main__':
+    ad = AnswerDict(a='foo')
+    print(ad['a'])
+    d = {}
+    d.update(ad)
+    print(d['a'])
+    print(d)
+
+"""
+Output:
+
+42
+foo
+{'a': 'foo'}
+"""
+```
+
+You can solve this problems by inheriting from the ```collections``` containers like ```UserDict```, ```UserList```, ```UserString```, etc.:
+
+```Python
+import collections
+
+
+class DoppelDict(collections.UserDict):
+    def __setitem__(self, key, value):
+        super().__setitem__(key, [value] * 2)
+
+
+class AnswerDict(collections.UserDict):
+    def __getitem__(self, item):
+        return 42
+
+
+if __name__ == '__main__':
+    dd = DoppelDict(one=1)
+    print(dd)
+    dd['two'] = 2
+    print(dd)
+    dd.update(three=1)
+    print(dd)
+
+    print("-"*50)
+
+    ad = AnswerDict(a='foo')
+    print(ad['a'])
+    d = {}
+    d.update(ad)
+    print(d['a'])
+    print(d)
+
+"""
+Output:
+
+{'one': [1, 1]}
+{'one': [1, 1], 'two': [2, 2]}
+{'one': [1, 1], 'two': [2, 2], 'three': [1, 1]}
+--------------------------------------------------
+42
+42
+{'a': 42}
+"""
+```
+
+> Subclassing built-in types like *dict* or *list* or *str* directly is error-pronse because the built-in methods mostly ignore user-defined overrides. Instead of subclassing the built-ins, derive your classes from the ```collections``` module using ```UserDict```, ```UserList```, and ```UserString``` which are desgined to be easily extended.
+
+## Coping with multiple inheritance
+
+```>```
+
+### 1. Distinguish interface inheritance from implementation inheritance
+
+When dealing with multiple inheritance, it's useful to keep straight the reasosn why subclassing is done in the first place. The main reasons are:
+
+* Inheritance of interface creates a subtype, implying an "is-a" relationship.
+* Inheritance of implementation avoids code duplication by reuse.
+
+In practice, both uses are often simultaneous, but whenever you can make the intent clear, do it. Inheritance for code reuse is an implementation detail, and it can often be replaced by composition and delegation. On the other hand, interface inheritance is the backbone of a framework.
+
+### 2. Make interfaces explicit with ABCs
+
+In modern Python, if  aclass is desgiend tto define an interface, it should be an explicit ABC.
+
+### 3. Use Mixins for code reuse
+
+If a class is desgiend to provide method implementations for reuse by multiple unrelated subclasses, without implying an "is-a" relationship, it should be an explicit *mixin* class. 
+
+***Conceptually, a mixin does not define a new type; it merely bundles methods for reuse.***
+
+***A mixin should never be instantiated, and concrete classes should not inherit only from a mixin.***
+
+***Each mixin should provide a single specific behavior, implementing few and very closesly related methods.***
+
+### 4. Make mixins explicit by naming
+
+There is no formal way in Python to state that a calss is a mixin, so it is highly recommended that they are named with a *...Mixin* suffix.
+
+### 5. An ABC May also be a mixin; The reverse is not true
+
+Because an ABC can implement concrete methods, it works as a mixin as well. An ABC also defines a type, which a mixin does not. And an ABC can be the sole base class of any other class, while a mixin should never be subclasses alone except by another, more specialized mixin - not a common arrangement in real code.
+
+One restriction applies to ABCs and not to mixins: the concrete methods implemented in an ABC should only collaborate with methods of the same ABC and its superclasses. Thsi implies that concrete methods in an ABC are always for convenience, because everything they do, a user of the class can also do by calling other methods of the ABC.
+
+### 6. Don't subclass from more than one concrete class
+
+Concrete classes should have zero or at most one concrete superclass. 
+In other words, all but one of the superclasses of a concrete class hsould be ABCs or mixins.
+For example, in the following code, if ```Alpha``` is a concrete class, then ```Beta``` and ```Gamma``` must be ABCs or mixins:
+
+```Python
+class MyConcreteClass(Alpha, Beta, Gamma):
+    """This is a concrete class: it can be instantiated."""
+    # ... more code ...
+```
+
+### 7. Provide aggregate classes to users
+
+If some combination of ABCs or mixins is particularly useful to client code, provide a class that brings them together in a sensible way. Grady Booch calls this an *aggregate class*: "A class that is constructed primarily by inheriting from mixins and does not add its own structure or behavior is called an *aggregate class*".
+
+For example, here is the complete source code for ```tkinter.Widget```:
+
+```Python
+class Widget(BaseWidget, Pack, Place, Grid):
+    """Internal class.
+
+    Base class for a widget which can be positioned with the geometry managers Pack, Place or Grid."""
+    pass
+```
+
+The body of ```Widget``` is empty, but the class provides a useful service: it brings together four superclasses so that anyone who needs to create a new widget does not need to remember all those mixins, or wonder if they need to be declared in a certain order in a ```class``` statement.
+
+### 8. "Favor object composition over class inheritance"
+
+This quote comes straight from the *Design Patterns* book.
+Once you get comfortable with inheritance, it's too easy to overuse it. Placing objects in a neat hierarchy appeals to our sense of order; programmers do it just for fun.
+
+However, favoring composition leads to more flexible designs. Fore xample, in the case of the ```tkinter.Widget``` class, instead of inheriting the methods from a llgeometry maangers, widget instnaces could hold a reference to a geometry manager, and invoke its methods. After all a ```Widget``` should not "be" a geometry manager, but could use the services of one via delegation. Then you could add a new geometry manager without touching the widget class heirarchy and without worrying about name clashes. Even with single inheritance , this principle enhances flexibility, because subclassing is a form of tight coupling, and tall inheritacne trees tend to be brittle.
+
+Composition and delegation can replace the use of mixins to make behaviors available to different classes, but cannot replace the use of interface inheritance to define a hierarchy of types.
