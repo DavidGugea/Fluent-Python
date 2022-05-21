@@ -3526,3 +3526,91 @@ Once you get comfortable with inheritance, it's too easy to overuse it. Placing 
 However, favoring composition leads to more flexible designs. Fore xample, in the case of the ```tkinter.Widget``` class, instead of inheriting the methods from a llgeometry maangers, widget instnaces could hold a reference to a geometry manager, and invoke its methods. After all a ```Widget``` should not "be" a geometry manager, but could use the services of one via delegation. Then you could add a new geometry manager without touching the widget class heirarchy and without worrying about name clashes. Even with single inheritance , this principle enhances flexibility, because subclassing is a form of tight coupling, and tall inheritacne trees tend to be brittle.
 
 Composition and delegation can replace the use of mixins to make behaviors available to different classes, but cannot replace the use of interface inheritance to define a hierarchy of types.
+
+# 13. Operator Overloading: Doing It Right
+
+## Operator Overloading 101
+
+These are the limitations Python imposes when working with operator overloading:
+
+* We cannot overload operators for the built-in types.
+* We cannot create new operators, only overload existing ones.
+* A few operators can't be overloaded: ```is```, ```and```, ```or```, ```not``` (but the bitwise ```&```, ```|```, ```~``` can).
+
+## When ```x``` and ```+x``` are not equal
+
+The first case when ```x``` is not equal to ```+x``` is when you change hte arithmetic context of the ```decimal.Decimal``` class:
+
+```Python
+import decimal
+
+ctx = decimal.getcontext()  # Get a reference to the current global arithmetic context
+ctx.prec = 40  # Set the precision of the arithmetic context to 40
+
+one_third = decimal.Decimal('1') / decimal.Decimal('3')  # Computer 1/3 using the current precision
+print(one_third)  # Inspect the result; there are 40 digits after the decimal point.
+
+print(one_third == +one_third)  # one_third == +one_third is True
+
+ctx.prec = 28  # Lower precision to 28 - the default for Decimal arithmetic in Python 3.4
+
+print(one_third == +one_third)  # Now one_third == +one_third is False
+
+print(+one_third)  # Inspect +one_third; there are 28 digits after the '.' here.
+```
+
+```+one_third``` produces a new ```Decimal``` instance from the value of ```one_third```, but using the precision of the current arithmetic context.
+
+The second case is when using ```Counter``` from ```collections``` since ```Counter``` addition discards from the result any item with a negative or 0 count. The prefix ```+``` is a shortcut for adding an empty ```Counter```, therefore it produces a new ```Counter``` preserving only the tallies that are greater than 0:
+
+```Python
+from collections import Counter
+
+ct = Counter("abracadabra")
+print(ct)
+ct['r'] = -3
+ct['d'] = 0
+print(ct)
+print(+ct)
+```
+
+## Overloading + for vector addition
+
+> ***Special methods implementing unary or infix operators should never change their operands. Expressions with such operators are expected to produce results by creating new objects.***
+
+This is how python analyzes ```a+b```:
+
+1. If ```a``` has ```__add__```, call ```a.__add__(b)``` and return result unless it's ```NotImplemented```.
+2. If ```a``` doesn't have ```__add__```, or calling it returns ```NotImplemented``` check if ```b``` has ```__radd__```, then call ```b.__radd__(a)``` and retun result unless it's ```NotImplemented```.
+3. If ```b``` doesn't have ```__radd__```, or calling it returns ```NotImplemented```, raise ```TypeError``` with an *unsupported operand types* message.
+
+The ```__radd__``` method is called the "reflected" or "revrsed" version of ```__add__```.
+
+Here is the flowchart for computing ```a+b```:
+
+![](ScreenshotsForNotes/Chapter13/flowchart_computing_a_plus_b.PNG)
+
+> Do not confuse ```NotImplemented``` with ```NotImplementedError```. The first, ```NotImplemented```, is a special singleton value that an infix operator special mehtod should ```return``` to tell the interpreter it cannot handle a given operand. In contrast, ```NotImplementedError``` is an exception that stub methods in abstract classes ```raise``` to warn that they must be overwritten by subclasses.
+
+When implementing ```__add__``` and ```__radd__``` it's better to use a ```try/except``` clause inside the ```__add__``` method and return ```NotImplemented``` in the case of a ```TypeError``` so that you can give a signal to the user that the operands are not valid:
+
+```Python
+def __add__(self, other):
+    try:
+        # ... #
+    except TypeError:
+        return NotImplemented
+
+def __radd__(self, other):
+    return self + other
+```
+
+> If an infix operator method raises an exception, it aborts the operator dispatch algorithm. In the particular case of ```TypeError```, it is often better to catch it and return ```NotImplemented```. Thsi allows the interpreter to try calling the reversed operator method, which may correctly handle the computation with the swapped operands, if they are of different types.
+
+## Operators and their dunder methods
+
+![](ScreenshotsForNotes/Chapter13/operators_and_their_dunder.PNG)
+
+![](ScreenshotsForNotes/Chapter13/comparison_operators_and_their_dunder.PNG)
+
+> In general, if a forward infix operator method (e.g., ```__mul__```) is designed to work only with operands of the same type as ```self```, it's useless to implement the corresponding reverse method (e.g., ```__rmul__```) because that, by definition, will only be invoked when dealing with an operand of a different type.
