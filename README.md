@@ -3882,3 +3882,170 @@ if __name__ == '__main__':
 
 The ```iter``` function here returns a ```callable_iterator```. The ```for``` loop in the example may run for a very long time, but it will never display ```1``` (when it comes to ```1```, it stops the whole iteration), because that is the sentinel value. As usual with iterators, the ```d6_iter``` object in the example becomes useless once exhausted. To start over, you must rebuild the iterator by invoking ```iter(...)``` again.
 
+# 15. Context Managers and else Blocks
+
+The ```with``` statement ests up a temporary context and reliably tears it down, under the control of a context manager object. This preventes errors and reduces boilerplate code making APIs at the same time safer and easier to use.
+
+## Do This, Then That: else Blocks Beyond if
+
+```>```
+
+The ```else``` clause can be used not only in ```if``` statements but also in ```for```, ```while```, and ```try``` statements.
+
+The semantics of ```for/else```, ```while/else```, and ```try/else``` are closely related, but very different from ```if/else```.
+
+Here are the rules:
+
+* ```for```
+    * The ```else``` block will run only if and when the ```for loop``` runs to completion (i.e., not if the ```for``` is aborted with a ```break```).
+* ```while```
+    * The ```else``` block will run only if and when the ```while``` loop exits because the condition became ```falsy``` (i.e., not when the ```while``` is aborted with a ```break```).
+* ```try```
+    * The ```else``` block will only run if no exception is raised in the ```try``` block. The official docs also state: "Exceptions in the ```else``` clause are not handled by the preceding except clauses. **The body of a ```try``` block should only have the statements that may generate the expected exceptions.**
+
+Here is an example:
+
+```Python
+t1 = tuple([1, 2, 3, 4, 5])
+t2 = tuple()
+
+if __name__ == '__main__':
+    for x in t1:
+        print(x)
+    else:
+        print("After for-loop-iteration over t1")
+
+    i  = 0
+    while i < len(t1):
+        print(t1[i])
+        i += 1
+    else:
+        print("After while-loop-iteration over t1")
+
+    try:
+        # print(1 + t3)
+        print(t1)
+    except Exception as e:
+        print(e)
+    else:
+        print("The try-block didn't raise any exception.")
+
+"""
+Output:
+
+1
+2
+3
+4
+5
+After for-loop-iteration over t1
+1
+2
+3
+4
+5
+After while-loop-iteration over t1
+(1, 2, 3, 4, 5)
+The try-block didn't raise any exception.
+"""
+```
+
+In Python,```try/except``` is commonly used for control flow, and not just for error handling. There's even an acronym/slogan for that documented in the official Python glossary:
+
+* ***EAFP***
+    * Easier to ask for forgiveness than permission. This common Python coding style **assumes the existence of valid keys or attributes and catches exceptions if the assumption proves false.** This clean and fast style is characterized by the presence of *many try and except statements*. The technique contrats with the *LBYL* style common to many other languages such as C.
+* ***LBYL***
+    * Look before you leap. This coding style explicitly **tests for pre-conditions before making calls or lookups.** This style contrats with the EAFP approach and is charracterized by the presence of many if statements. In a multi-threaded environment, the LBYL approach can risk introduction a race condition between "the looking" and "the leaping". For example, the code, if key in maaping: return mapping[key] can fail if another thread removes key from mapping after the test, but before the lookup. This issue can be solved with locks or by using the EAFP approach.
+
+## Context managers and with Blocks
+
+```>```
+
+Context manager objects exist to control a ```with``` statement, just like iterators exist to control a ```for``` statement.
+
+The ```with``` statement was designed to simplify the ```try/finally``` pattern, which guarantees that some operation is performed after a block of code, even if the block is aborted because of an exception, a ```return``` or ```sys.exit()``` call. The code in the ``finally``` clause usually releases a critical resource or restores some previous state that was temporarily changed.
+
+The context manager protocol consists of the ```__enter__``` and ```__exit__``` methods. At the start of the ```with```, ```__enter__``` is invoked on the context manager object. The role of the ```finally``` clause is played by a call to ```__exit__``` on the ocntext manager object at the end of the ```with``` block.
+
+The most common example is making sure a file object is closed.
+
+## The ```contextlib``` Utilities
+
+```>```
+
+Before rolling your own context manager classes, take a look at ```contextlib``` utilities. The ```contextlib``` module includes classes and other functions that are more widely applicable:
+
+* ```closing```
+    * A function to build context managers out of ojbect that provide a ```close()``` method but don't implement the ```__enter__```/```__exit__``` protocol.
+* ```suppress```
+    * A context manager to temporarily ignore specified exceptions.
+* ```@contextmanager```
+    * A decorator that lets you build a context manager from a simple generator function, instead of creating a class and implementing the protocol.
+* ```ContextDecorator```
+    * A base class for defining class-based context managers that can also be used as function decorators, running the entire function within a manged context.
+* ```ExisStack```
+    * A context manager that lets you enter a variable number of context managers. When the ```with``` block ends, ```ExitStack``` calls the stacked context managers' ```__exit__``` methos in LIFO order (last entered, first exited). Use this class when you don't know beforehand how many context managers you need to enter in your ```with``` block; for example, when opening all files from an arbitrary list of files at the same time.
+
+## Using ```@contextmanager```
+
+```>```
+
+The ```@contextmanager``` decorator reduces the boilerplate of creating a context manager: instead of writing a whoel class with ```__enter__```/```__exit__``` methods, you just implement a generator with a single yield that should produce whatever you want the ```__enter__``` method to return.
+
+In a generator decorated with ```@contextmanager```, ```yield``` is used to split the body of the function in two parts: everything before the ```yield``` will be executed at the beginning of the ```with``` block when the interpreter calls ```__enter__```; the code after ```yield``` will run when ```__exit__``` is called at the end of the block.
+
+Example:
+
+```Python
+class LookingGlass:
+    def __enter__(self):
+        import sys
+        self.original_write = sys.stdout.write
+        sys.stdout.write = self.reverse_write
+        return 'JABBERWOCKY'
+
+    def reverse_write(self, text):
+        self.original_write(text[::-1])
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        import sys
+        sys.stdout.write = self.original_write
+
+        if exc_type is ZeroDivisionError:
+            print('Please DO NOT divide by zero!')
+            return True
+```
+
+can also be written as:
+
+```Python
+import contextlib
+
+
+@contextlib.contextmanager
+def looking_glass():
+    import sys
+    original_write = sys.stdout.write
+
+    def reverse_write(text):
+        original_write(text[::-1])
+
+    sys.stdout.write = reverse_write
+
+    yield 'JABBERWOCKY'
+
+    sys.stdout.write = original_write
+```
+
+Esentially the ```contextlib.contextmanager``` decorator wraps the function in a class that implements the ```__enter__``` and ```__exit__``` methods.
+
+The ```__enter__``` method of that class:
+
+1. Invokes the generator function ahd holds on to the generator object - let's call it ```gen```.
+2. Calls ```next(gen)``` to make it run to the ```yield``` keyword.
+3. Returns the value yielded by ```next(gen)```, so it can be bound to a target variable in the with/as form.
+
+When the ```with``` block terminates, the ```__exit__``` method:
+
+1. Checks if an exception was passed as ```exc_type```; if so, ```gen.throw(exception)``` is invoked, causing the exception to be raised in the ```yield``` line inside the generator function body.
+2. Otherwise, ```next(gen)``` is called, resuming the execution of the generator function body after the ```yield```.
