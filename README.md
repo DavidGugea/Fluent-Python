@@ -3614,3 +3614,271 @@ def __radd__(self, other):
 ![](ScreenshotsForNotes/Chapter13/comparison_operators_and_their_dunder.PNG)
 
 > In general, if a forward infix operator method (e.g., ```__mul__```) is designed to work only with operands of the same type as ```self```, it's useless to implement the corresponding reverse method (e.g., ```__rmul__```) because that, by definition, will only be invoked when dealing with an operand of a different type.
+
+---
+
+# Part V - Control Flow
+
+---
+
+# 14. Iterables, Iterators, and Generators
+
+> When I see patterns in my programs, I consider it a sign of trouble. The shape of a program should reflect only the problem it needs to solve. Any other regularity in the code is a sign, to me at least, that I'm using abstractions that aren't powerful enough - often that I'm generating by hand the expansions of some macro that I need to write.
+>
+> \- Paul Graham, Lisp *hacker and venture capitalist*
+
+
+***Iteration is fundamental to data processing.***
+
+When scanning datasets that don't fit in memory, we need a way to fetch the data lazily, that is, one at a time and only when we need it. This is what the *Iterator pattern* is about.
+
+> Every generator is an iterator: generators fully implement the interator interface. But an iterator - as defined in the GoF book - retrieves tiems from a collection, while a generator can produce items "out of thin air."
+
+Every collection in Python is *iterable*, and iterators are used internally to support:
+
+* ```for``` loops
+* Collection types construction and extension
+* Looping over text files line by line
+* List, dict, and set comprehensions
+* Tuple unpacking
+* Unpacking actual parameters with ```*``` in function calls
+
+## Why sequences are iterable: The ```iter``` function
+
+Whenever the interpreter needs to iterate over an object ```x```, it automatically calls ```iter(x)```.
+
+The ```iter``` built-in function:
+
+1. Checks wheter the object implements ```__iter__```, and calls that to obtain an iterator.
+2. If ```__iter__``` is not implemented, but ```__getitem__``` is implemented, Python creates an iterator that attempts to fetch items in order, starting from index 0 (zero).
+3. If that fails, Python raises ```TypeError```, usually saying "```C``` object is not iterable," where ```C``` is the class of the target object.
+
+Python sequences are iterable because they implement ```__getitem__```. The standard sequences also implement ```__iter__``` and **when you are building a sequence that is meant to be iterable, implement ```__iter__``` as well, not only ```__getitem__``` since the special handling of ```__getitem__``` exists only for backwards compatibility reasons and may be gone in the future**.
+
+(***TLDR***: Implement ```__iter__```, not only ```__getitem__``` when building sequences)
+
+There is also an extreme form of duck typing going on in Python with iterable sequences: An object is considered iterable not only when it implements the special method ```__iter__``` but also when it implements ```__getitem__``` if ```__getitem__``` accepts ```int``` keys starting from 0.
+
+In the goose-typing approach: An object is considered iterable if it implements ```__iter__```. There is no subclassing or registration required because ```abc.Iterable``` implements the ```__subclasshook__``` method:
+
+```Python
+from collections import abc
+
+class Foo:
+    def __iter__(self):
+        pass
+
+print(issubclass(Foo, abc.Iterable)) # True
+
+f = Foo()
+print(issubclass(f, abc.Iterable)) # True
+```
+
+> The most accurate way to check wheter an object ```x``` is iterable is to call ```iter(x)``` and handle a ```TypeError``` exception if it isn't. This is more accurate than using ```isinstance(x, abc.Iterable)```, because ```iter(x)``` also considers the legacy ```__getitem__``` method, while the Iteralbe ABC doesn't.
+
+Use ```try/except``` instead of checking if something is an iterable, if you are going to iterate over it right away. You can check if it's an iterable with ```isinstance```if you are holding onto the object then iterating over it later.
+
+## Iterables Versus Iterators
+
+```>```
+
+**This is the definition of an iterable:**
+
+> Any object from which their ```iter``` built-in function can obtain an iterator.
+> Objects implementing an ```__iter__``` method returning an *iteartor* are iterable.
+> Sequences are always iterables; as are objects implementing a ```__getitem__``` method that takes 0-based indexes.
+
+The standard interface for an iterator has two methods:
+
+> ```__next__```
+> Returns the next available item, raising ```StopIteration``` when there are no more items.
+
+> ```__iter__```
+> Returns ```self```; this allows iterators to be used where an iterable is expected, for example, in a ```for loop```.
+
+The ```Iterable``` and ```Iterator``` ABCs. The methods in *italic* are abstract. A concrete ```Itearble.__iter__``` should return a new ```Iterator``` instance. A concrete ```Iterator``` must implement ```__next__```. The ```Iterator.__iter__``` method just returns the instance itself.
+
+![Iterables and Iterators](ScreenshotsForNotes/Chapter14/iterable_and_iterator.PNG)
+
+The ```Iterator``` ABC implements ```__iter__``` by doing ```return self```. This allows an iterator to be used wherever an iterable is required.
+
+This is the source code for ```abc.Iterator```:
+
+```Python
+class Iterator(Iterable):
+
+    __slots__ = ()
+
+    @abstractmethod
+    def __next__(self):
+        'Return the next item from the iterator. When exhausted, raise StopIteration'
+        raise StopIteration
+
+    def __iter__(self):
+        return self
+
+    @classmethod
+    def __subclasshook__(cls, C):
+        if cls is Iterator:
+            return _check_methods(C, '__iter__', '__next__')
+        return NotImplemented
+```
+
+The ```Lib/types.py``` module source code has a comment that says:
+
+```Python
+# Iterators in Python aren't a matter of type but of protocol.  A large
+# and changing number of builtin types implement *some* flavor of
+# iterator.  Don't check the type!  Use hasattr to check for both
+# "__iter__" and "__next__" attributes instead.
+```
+
+> Taking into account the advice from ```Lib/types.py``` and the logic implemented in ```Lib/_collections_abc.py```, **the best way to check if an object ```x``` is an iterator is to call ```isinstance(x, abc.Iterator)```**. Thanks to ```Iterator.__subclasshook__```, this test works even if the class of ```x``` is not a real or virtual subclass of ```Iterator```.
+
+Because the only methods required of an iterator are ```__next__``` and ```__iter__```, there is no way to check wheter there are remaining items, other than to call ```next()``` and catch ```StopIteration```. Also, it's not possible to "reset" an iterator. If you need to start over, you need to call ```iter(...)``` on the iterable that built the iterator in the first place. Calling ```iter(...)``` on the iterator itself won't help, because - as mentioned - ```Iterator.__iter__``` is implemented by returning ```self```, so this will not reset a depleted iterator.
+
+This is the definition for ```iterator```:
+
+> Any object that implements the ```__next__``` no-argument method that returns the next item in a series or raises ```StopIteration``` when there are no more items. Python interators also implement the ```__iter__``` method so they are *itearble* as well.
+
+## The common cause of errors in building iterables and iterators
+
+```>```
+
+**A common cause of errors in building iterables and iterators is to confuse the two.**
+
+To be clear: iterables have an ```__iter__``` method that instantiates an ew iterator every time. Iterators implement a ```__next__``` method that returns individual items, and an ```__iter__``` method that returns ```self```.
+
+Therefore, ***iterators are also iterable, but iterables are not iterators***.
+
+***An iterable should never act as an iterator over itself.*** In other words, iterables must implement ```__iter__```, but not ```__next__```.
+
+On the other hand, ***iterators should always be iterable. An iterators ```__iter__``` should just return ```self```***.
+
+## How a generator function works
+
+**Any python function that contains the ```yield``` keyword is a generator function: when called, it returns a generator object.
+A generator function is a generator factory.**
+
+A generator function returns a generator object that wraps the body of the function.
+When you use the ```next(...)``` function on a generator object, you gete the next *yielded* value from the function body. When the function body returns, the generator object raises ```StopIteration```.
+
+## A lazy implementation
+
+The ```Iterator``` interface is designed to be lazy: ```next(iterator)``` produces one item at a time and only when you call ```next()```. The opposite of lazy is eager.
+
+> Whenver you are using Python 3 and start wondering "Is there a lazy way of doing this?", often the answer is "Yes."
+
+## A generator expression
+
+```>```
+
+A generator expression can be understood as a lazy version of a list comprehension: it does not eagerly build a list, but returns a generator that will lazily produce the items on demand. In other words, if a list comprehension is a factory of lists, a generator expression is a factory of generators.
+
+## Generator function in the standard library
+
+> ***When implementing generators, know what is available in the standard library, otherwise there's a good chance you'll reinvent the wheel.***
+
+### Filtering generator functions
+
+![Generator Functions STL](ScreenshotsForNotes/Chapter14/filtering_generator_functions_1.PNG)
+![Generator Functions STL](ScreenshotsForNotes/Chapter14/filtering_generator_functions_2.PNG)
+
+Example:
+
+![Generator Functions STL](ScreenshotsForNotes/Chapter14/filtering_generator_functions_example.PNG)
+
+### Mapping generator functions
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/mapping_generator_functions.PNG)
+
+Example:
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/mapping_generator_functions_example.PNG)
+
+### Generator functions the merge multiple input iterables
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/generator_functions_that_merge_multiple_input_iterables.PNG)
+
+Example:
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/generator_functions_that_merge_multiple_input_iterables_example.PNG)
+
+### Generator functions that expand each input item into mulitple output items
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/generator_functions_that_expand_each_input_item_into_multiple_output_items_1.PNG)
+![Generator Function STL](ScreenshotsForNotes/Chapter14/generator_functions_that_expand_each_input_item_into_multiple_output_items_2.PNG)
+
+Example:
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/generator_functions_that_expand_each_input_item_into_multiple_output_items_example.PNG)
+![Generator Function STL](ScreenshotsForNotes/Chapter14/generator_functions_that_expand_each_input_item_into_multiple_output_items_example_2.PNG)
+
+### Rearranging generator functions
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/rearranging_generator_functions.PNG)
+
+Example:
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/rearranging_generator_functions_example_1.PNG)
+![Generator Function STL](ScreenshotsForNotes/Chapter14/rearranging_generator_functions_example_2.PNG)
+
+### Built-in funcitons that read iterables and return single values
+
+![Generator Function STL](ScreenshotsForNotes/Chapter14/built_in_functions_that_read_iterables_and_return_single_values.PNG)
+
+## Yield from
+
+Take a look at the following example:
+
+```Python
+def chain(*iterables):
+    for iterable in iterables:
+        for item in iterable:
+            yield item
+
+
+s = "ABC"
+t = {1, 2, 3}
+
+if __name__ == '__main__':
+    print(list(chain(s, t))) # ['A', 'B', 'C', 1, 2, 3]
+```
+
+You can write the same thing using ```yield from```:
+
+```Python
+def chain(*iterables):
+    for iterable in iterables:
+        for item in iterable:
+            yield item
+```
+
+***```yield from``` is not just syntactical sugar***. It establishes a transparent bidirectional connection between the caller and the sub-generator. It is often used in Coroutines (Chapter 16).
+
+## A closer look at the ```iter``` function
+
+As we've seen, Python calls ```iter(x)``` when it needs to iterate over an object ```x```.
+
+But ```iter``` has another trick: it can be called with two arguments to create an iterator from a regular function or any callable object. In this usage, th efirst argument must be a callable to be invoked repeatedly (with no arguments) to yield values, and the second argument is a sentinel: a marker value which, when returend by the callable, causes the iterator to raise ```Stopiteration``` instead of yielding the sentinel.
+
+The following example shows how to use ```iter``` to roll a six-sided dice until a 1 is rolled:
+
+```Python
+from random import randint
+
+
+def d6():
+    return randint(1, 6)
+
+
+if __name__ == '__main__':
+    d6_iter = iter(d6, 1)
+    print(d6_iter)
+
+    for roll in d6_iter:
+        print(roll)
+```
+
+The ```iter``` function here returns a ```callable_iterator```. The ```for``` loop in the example may run for a very long time, but it will never display ```1``` (when it comes to ```1```, it stops the whole iteration), because that is the sentinel value. As usual with iterators, the ```d6_iter``` object in the example becomes useless once exhausted. To start over, you must rebuild the iterator by invoking ```iter(...)``` again.
+
