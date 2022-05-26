@@ -621,7 +621,6 @@ B
 
 ## Sets items must be hashable
 
-Set elements must be *hashable*. The ```set``` type is not hashable but the ```frozenset``` type is, so it's possible to have instances of ```frozenset``` inside your ```set```.
 
 ## ```set``` Literals
 
@@ -4049,3 +4048,735 @@ When the ```with``` block terminates, the ```__exit__``` method:
 
 1. Checks if an exception was passed as ```exc_type```; if so, ```gen.throw(exception)``` is invoked, causing the exception to be raised in the ```yield``` line inside the generator function body.
 2. Otherwise, ```next(gen)``` is called, resuming the execution of the generator function body after the ```yield```.
+
+# 16. Coroutines
+
+## What is a coroutine
+
+```>```
+
+A line such as ```yield item``` produces a value that is received by the caller of ```next(...)```, and it also gives way, suspending the execution of the generator so that the caller may proceed until it's ready to consume another value by invoking ```next()``` again. ***The caller pulls values from the generator.***
+
+A coroutine is syntactically like a generator: *just a function with the ```yield``` keyword in its body*. However, in a coroutine *```yield``` usually apperas on the rihgt side of an expression* (e.g. ```value = yield```), and it may or may not produce a value - if there is no expression after the  ```yield``` keyword, the generator yields ```None```. The coroutine may receive data from the caller, which uses ```.send(value)``` instead of ```next(...)``` to feed the coroutine. ***Usually, the claler pushes values into the coroutine.***
+
+It is even possible that no data goes in or out through the ```yield``` keyword. ***Regardless of the flow of data, ```yield``` is a control flow device that can be used to implement cooperative multitasking: each coroutine yields control to a central scheduler so that other coroutines can be activated.***
+
+***When you start thinking of ```yield``` primarily in terms of control flow, you have the mindset to understand coroutines.***
+
+Python coroutines are the produce of a series of enhancements to the humble generator functions.
+
+## How coroutines evolved from generators
+
+The ```yield``` keyword can be used in an expression, and the ```.send(value)``` method was added to the generator API. Using ```.send(...)```, the caller of the generator can post data that then becomes the value of the ```yield``` expression inside the generator function. This allows a generator to be used as a coroutine: ***a procedure that collaborates with the caller, yielding and receiving values form the caller.***
+
+In addition to ```.send()```, PEP 342 also added ```.throw()``` and ```.close()``` methods that respecitvely allows the caller to throw an exception to be handled inside the generator, and to terminate it.
+
+## Basic behavior of a generator used as a coroutine
+
+The following code is the simplest demonstration of a coroutine:
+
+```Python
+def simple_coroutine():  # A coroutine is defined as a generator function: with yield in its body
+    print('-> coroutine started')
+    x = yield  # yield is used as an expression; when the coroutine is desgiend just to receive data from the client it yields None - this is implicit because there is no expression to the right of the yield keyword
+
+    print('-> coroutine received: {0}'.format(x))
+
+
+if __name__ == '__main__':
+    my_coro = simple_coroutine()
+    print(my_coro)  # As usual with generators, you call the function to get a generator object back
+    print(
+        next(my_coro)
+        # The first call is next(...) because the generator hasn't started so it's not waiting in a yield and we can't send it any data initially.
+    )
+    print(
+        my_coro.send(42)
+        # This call makes the yield in the coroutine body evaluate to 42; now the courinted resumes and runs until the next yield or termination
+    )
+
+    # In this case, control flolws off the end of the coroutine body, which prompts the generator machinery to raise StopIteration, as usual
+
+"""
+Output:
+
+coroutine.py
+<generator object simple_coroutine at 0x00000195889C1EE0>
+-> coroutine started
+None
+-> coroutine received: 42
+Traceback (most recent call last):
+  File "...", line 16, in <module>
+    my_coro.send(42)
+StopIteration
+"""
+```
+
+A coroutine can be in one of four states. You can determine the current state using the ```inspect.getgeneratorstate(...)``` function, which returns one of these strings:
+
+* ```GEN_CREATED```
+    * Waiting to start execution. The generator function has been created but it hasn't started it, you didn't yield any values from it. It only has a stack frame that contains the arguments given to the generator function (if it has any). So, as a summary, you receive this when the generator didn't start yet: ```gen = build_generator()```
+* ```GEN_RUNNING```
+    * Currently being executed by the interpreter. You'll only see this state in a multithreaded application - or if the generatr object calls ```getgeneratorstate``` on itself, which is not useful.
+* ```GEN_SUSPENDED```
+    * Currently suspended at a ```yield``` expression. When the generator still has values to yield
+* ```GEN_CLOSED```
+    * Exectuion has completed. After the generator has raised ```StopIteration```
+
+Because the argument to the ```send``` method will become the value of the pending ```yield``` expression, it follwos that you can only make a call like ```my_coro.send(42)``` if the coroutine is currently suspended. But that'sn ot the case if the coroutine has never been activated - when it's state is '```GEN_CREATED```'. That's why the first activation of a coroutine is always done with ```next(my_coro)``` - you can also call ```my_coro.send(None)```, and the effect is the same.
+
+***The initial call ```next(my_coro)``` is often described as "priming" the coroutine (i.e., advancing it to the first ```yield``` to make it ready for use as a live coroutine).***
+
+## A detailed example of a coroutine
+
+Take a look at the following example:
+
+```Python
+from inspect import getgeneratorstate
+
+
+def simple_coro2(a):
+    print('-> Started: a = {0}'.format(a))
+    b = yield a
+    print('-> Received: b = {0}'.format(b))
+    c = yield a + b
+    print('-> Received: c = {0}'.format(c))
+
+
+if __name__ == '__main__':
+    my_coro2 = simple_coro2(14)
+    print(
+        getgeneratorstate(my_coro2)
+        # inspect.getgeneratorstate reports GEN_CREATED  (i.e., the coroutine has not started )
+    )
+
+    next(my_coro2)  # Advance Coroutine to first yield, printing -> Started: a = 14 message then yielding value of a and suspending to wait for value to be assigend to b
+
+    print(
+        getgeneratorstate(my_coro2) # getgeneratorstate reports GEN_SUSPENDED (i.e., the coroutine is paused at a yield expression )
+    )
+
+    my_coro2.send(28) # Send number 28 to suspended coroutine; the yield expression evaluates to 28 and that number is bound to b. The -> Received: b = 28 message is displayed, the value of aa + b is yieldedd(42), and the coroutine is suspended waiting for the value to be assigned to c.
+
+    try:
+        my_coro2.send(99) # Send number 99 to suspended coroutine; the yield expression evaluates to 99 the number is bound to c. The -> Received: c = 99 message is displayed, then the coroutine terminates, causing the generator ojbect to raise StopIteration.
+    except StopIteration:
+        pass
+
+    print(getgeneratorstate(my_coro2)) # getgeneratorstate reports GEN_CLOSED (i.e., the coroutine execution has completed)
+
+"""
+Output:
+
+GEN_CREATED
+-> Started: a = 14
+GEN_SUSPENDED
+-> Received: b = 28
+-> Received: c = 99
+GEN_CLOSED
+"""
+```
+
+The coroutine is suspended at the ```yield`` keyword.
+
+***When Python sees an assingment that contains the ```yield``` keyword, it completly ignores the left-hand side of the assignment, and only executes the right-hand side of the assignment that contains the ```yield``` keyword. Afterwards, when you execute the ```.send(value)``` method, Python will assign the ```value``` given as an argument to the ```.send(value)``` method to the left-hand side of the previous argument. It will start where it previously ended, but by executing the left-hand side of the assignment and assigning the value of ```.send(value)``` to it. It will continue running until meeting another assignment that contains the ```yield``` keyword, again only executing the right-hand side of the assignment. If no such assignment is found, it will raise ```StopIteration```.***
+
+Example of how the previous coroutine works:
+
+1. ```next(my_coro2)``` prints first message and runs to ```yield a```, yielding number 14.
+2. ```my_coro2.send(28)``` assigns 28 to ```b```, prints second message, and runs to ```yield a + b```, yielding number 42.
+3. ```my_coro2.send(99)``` assigns 99 to ```c```, prints third message, and the coroutine terminates.
+
+Here is a visualization of how the Python interpreter executes the coroutine:
+
+![Coroutine Execution Visualization](ScreenshotsForNotes/Chapter16/CoroutineExecutionVisualization.PNG)
+
+## Example: Coroutine to compute a running average
+
+Take a look at the following code:
+
+```Python
+def averager():
+    total = 0.0
+    count = 0
+    average = None
+    while True:  # This infinite loop means this coroutine will keep on accepting values and producing results as
+        # long as the caller sends them. This coroutine will only terminate when the caller calls .close() on it,
+        # or when it's garbage collected because there are no more references to it.
+        new_value = yield average  # The yield statement here is used to suspend the coroutine, produce a result to the
+        # caller, and -later- to get a value sent by the caller to the coroutine, which resumes the infinite loop.
+        total += new_value
+        count += 1
+        average = total / count
+
+
+if __name__ == '__main__':
+    coro_avg = averager()  # Create the coroutine object
+
+    print(next(coro_avg))  # Prime it by calling next
+
+    print(coro_avg.send(10))  # Now we are in business: each call to .send() yields the current average
+    print(coro_avg.send(30))
+    print(coro_avg.send(5))
+
+"""
+Output:
+
+None
+10.0
+20.0
+15.0
+"""
+```
+
+When building the coroutine ```coro_avg = averager()``` the coroutine is in the state ```GEN_CREATED```. That means that you must prime it first.
+After the execution of the statement ```next(coro_avg)```, you have primed the coroutine, the Python interpreter has arrived to the ```new_value = yield average``` and has only executed the right-hand side, so it has executed ```yield average```. In our case ```averge``` is ```None```, so you can see ```None``` being printed out in the console since that is what the coroutine has yielded. If it were ```"Hello world"```, you would have gotten ```Hello world``` printed out in the console. The Python interpreter will completly ignore the left side of the assignment, you won't even have a variable called ```new_value``` on the stack frame, it will only strictly execute the right side of the assignmen, so ```yield average``` and *nothing* else.
+
+Since the coroutine is now inside of a while-loop that means that it accepts values until the client (you) write ```coro_avg.close()```. If it isn't closed manually, it will never close.
+
+In the next step, you write ```coro_avg.send(10)```. Python will now assign the value ```10``` to the left side of the previous assignment where it was left, so it will assign ```10``` to the variable ```new_value```. Now, the ```new_value``` will be added to the ```total``` variable, the ```count``` variable will be incremented with 1 and the ```average``` variable will be reassigned to ```total/count```. Now, the while loop will start again and the Python interpreter will again see an assignment that contains the ```yield``` keyword where it will **only execute the right side**, so it will ```yield average``` and ```average``` in our case is ```10.0 / 1``` so, it will yield 10.0.
+
+The same process is repeated with the values ```30``` and ```5```.
+
+Book explanation:
+
+```>```
+
+The advantage of using a coroutine is that ```total``` and ```count``` can be simple local variables: no instance attributes or closures are needed to keep the context between calls.
+
+```next(coro_avg)``` makes the coroutine advance to ```yield```, yielding the initial value for ```average```, which is ```None```, so it does nto appear on the console. At this point, the coroutine is suspended at the ```yield```, waiting for a value to be sent. The line ```coro_avg.send(10)``` provides that value, causing the coroutine to activate, assiging it to ```new_value```, updating the ```total```, ```count``` and ```average``` variables, and then starting another iteration in the ```while``` loop, which yields the ```average``` and waits for another term.
+
+## Decorators for coroutine priming
+
+You must always prime a coroutine before using it. This is easy to forget and can impact the readability of your code.
+
+In order to deal with this problem you can *prime* a coroutine using a decorator:
+
+```Python
+import functools
+
+
+def coroutine(func):
+    """Decorator: primes 'func' by advancing to first 'yield'"""
+
+    @functools.wraps(func)
+    def primer(*args, **kwargs):  # The decorated generator function is replaced by this primer function which,
+        # when invoked, returns the primed generator
+        gen = func(*args, **kwargs)  # Call the decorated function to get a generator object
+        next(gen)  # Prime the generator
+        return gen  # Return it
+
+    return primer
+```
+
+Now you can use this decorator to prime any coroutine:
+
+
+```Python
+@coroutine
+def averager():
+    total = 0.0
+    count = 0
+    average = None
+
+    while True:
+        new_value = yield average
+        total += new_value
+        count += 1
+        average = total / count
+
+
+if __name__ == '__main__':
+    coroutine = averager()
+    print(
+        getgeneratorstate(coroutine)
+    )
+
+"""
+Output:
+
+GEN_SUSPENDED
+"""
+```
+
+The coroutine is now suspended since it has been primed by the decorator.
+
+## Coroutine termination and exception handling
+
+```>```
+
+One way of terminating coroutines: you can use ```send``` with some sentinel value that tells the coroutine to exit. Constant built-in singletons like ```None``` and ```Ellipsis``` are convenient sentinel values. ```Ellipsis``` has the advantage of being quite unusual in data streams.
+
+Generator objects have two methods that allow the client to explicitly send exceptions into the coroutine - ```throw``` and ```close```:
+
+* ```generator.throw(exc_type[, exc_value[, traceback]])```
+    * Causes the ```yield``` expression where the generator was paused to raise the exception given. If the exception is handled by the generator, flow advanced to the next ```yield```, and the value yielded becomes the value of the ```generator.throw``` call. If the exception is not handled by the generator, it propagates to the context of the caller.
+* ```generator.close()```
+    * Causes the ```yield``` expression where the generator was paused to raise a ```GeneratorExit``` exception. No error is reported to the caller if the generator does not handle that exeption or raises ```StopIteration``` - usually by running o completion. When receiving a ```GeneratorExit```, the generator must not yield a value, otherwise a ```RuntimeError``` is raised. If any other exception is raised by the generator, it propagates to the caller.
+
+## Returning a value from a coroutine
+
+Take a look at the following example:
+
+```Python
+from inspect import getgeneratorstate
+from collections import namedtuple
+
+Result = namedtuple("Result", "count average")
+
+
+def averager():
+    total = 0.0
+    count = 0
+    average = None
+
+    while True:
+        new_value = yield average
+
+        if new_value is None:
+            break
+
+        total += new_value
+        count += 1
+        average = total / count
+
+    return Result(count, average)
+
+
+if __name__ == '__main__':
+    coroutine = averager()
+    next(coroutine)  # prime the coroutine
+
+    print(
+        getgeneratorstate(coroutine)
+    )
+
+    print(coroutine.send(50))
+    print(coroutine.send(100))
+
+    print(coroutine.send(None))
+
+"""
+Output:
+
+GEN_SUSPENDED
+50.0
+75.0
+Traceback (most recent call last):
+  File "...", line 44, in <module>
+    print(coroutine.send(None))
+StopIteration: Result(count=2, average=75.0)
+"""
+```
+
+In order for a coroutine to be able to return a value, the coroutine must be able to close. That means that a coroutine can only return a value, when the coroutine's state is ```GEN_CLOSED```. The reason for that is that, when you are returning a value from a coroutine, it has the same consequences as returning a value from a function. The consequence of returning a value from a coroutine/normal function is that the stack frame for that coroutine/function will be deleted and all of its local values will be deleted.
+
+When a coroutine ends, it raises a ```StopIteration``` exception. Therefore, the return value of the coroutine will be stored inside the ```StopIteration``` exception inside its ```value``` property.
+
+In our case, the ```while True``` loop ends, whenever we send ```None``` to the function. When the ```coroutine.send(None)``` code is executed, the value ```None``` is assigned to ```new_value``` and the ```while```-loop ends. When the while loop ends, we return a ```namedtuple``` and because the coroutine must raise the ```StopIteration``` exception, the return value (our ```namedtuple``` instance) becomes the ```value``` property of the raise exception.
+
+
+## Using ```yield from```
+
+### ```yield from``` and ```StopIteration```
+
+***The ```yield from``` construct handles ```StopIteration``` automatically by catching ```StopIteration``` internally.
+This is analogous to the use of ```StopIteration``` in ```for``` loops: the exception is handled by the loop machinery in a way that is transparent to the user.
+In the case of ```yield from```, the interpreter not only consumes the ```StopIteration```, but its ```value``` attribute becomes the value of the ```yield from``` expression itself.***
+
+### The basics of ```yield from```
+
+Similar constructs in toher languages are called ```await```: when a generator ```gen``` calls ```yield``` from ```subgen()```, the ```subgen``` takes over and will yield values to the caller of ```gen```; the caller will in effect drive ```subgen``` directly. Meanwhile ```gen``` will be blocked, waiting until ```subgen``` terminates.
+
+Example:
+
+```Python
+>>> def gen():
+        for c 'AB':
+            yield c
+        for i range(1, 3):
+            yield i
+>>> list(gen())
+['A', 'B', 1, 2]
+```
+
+Can be written as:
+
+```Python
+>>> def gen():
+        yield from 'AB'
+        yield from range(1, 3)
+>>> list(gen())
+['A', 'B', 1, 2]
+```
+
+The first thing ```yield from x``` expression does with the ```x``` object is to call ```iter(x)``` to botain an iterator from it. This means that ```x``` can be any iterable.
+
+However, if replacing nested ``for``` loops yielding values was the only contribution of ```yield from```, this language addition wouldn't have had a good chance of being accepted.
+
+The real nature of ```yield from``` cannot be demonstrated with simple iterables; it requires the mind-expanding use of nested generators. That's why PEP 380, which introduced ```yield from```, is titled "Syntax for Delegating to a Subgenerator"
+
+### PEP 380
+
+***The main feature of ```yield from``` is to open a bidirectional channel from the outermost caller to the innermost subgenerator, so that values can be sent and yielded back and forth directly from them, and exceptions can be thrown al lthe way in without adding a lot of exception handling boilerplate code in the intermediate coroutines. This is what enables coroutine delegation in a way that was not possible before.***
+
+The use of ```yield from``` requires a nontrivial arrangement of code. To talk about the required moving parts, PEP 380 uses some terms in a very specific way:
+
+* *delegation generator*
+    * The generator function that contains the ```yield from <iterable>``` expression.
+* *subgenerator*
+    * The generator obtained from the ```<iterable>``` part of the ```yield from``` expression.
+* *caller*
+    * PEP 380 uses the temr "caller" to refer to the client code that calls the delegating generator.
+
+### Example 1
+
+```Python
+from collections import namedtuple
+
+Result = namedtuple("Result", "count average")
+
+
+def averager():
+    total = 0.0
+    count = 0
+    average = None
+
+    while True:
+        new_value = yield average
+
+        if new_value is None:
+            break
+
+        total += new_value
+        count += 1
+        average = total / count
+
+    return Result(count, average)
+
+
+def get_average_for_list_of_values(result_dict, dict_key):
+    while True:
+        result_dict[dict_key] = yield from averager()
+
+
+def main():
+    data = {
+        "key1": [50, 100],
+        "key2": [0, 100],
+    }
+    """
+    result: {
+        "key1": Result(2, 75.0), # using namedtuple Result
+        "key2": Result(2, 50.0), # using namedtuple Result
+    } 
+    """
+
+    result = {}
+    for key, list_of_values in data.items():
+        get_average_for_list_of_values_delegating_generator = get_average_for_list_of_values(result, key)
+        next(get_average_for_list_of_values_delegating_generator)  # prime the coroutine
+
+        for value in list_of_values:
+            get_average_for_list_of_values_delegating_generator.send(
+                value  # value sent to the innermost subgen
+            )
+
+        get_average_for_list_of_values_delegating_generator.send(None)  # Close the innermost subgen
+
+    print(result)
+
+
+if __name__ == '__main__':
+    main()
+
+"""
+Output:
+
+{'key1': Result(count=2, average=75.0), 'key2': Result(count=2, average=50.0)}
+"""
+```
+
+The idea of the program above was to transform a dict that looks like this:
+
+```Python
+data = {
+    "key1": [50, 100],
+    "key2": [0, 100],
+}
+```
+
+Into a dict that looks like this:
+
+```Python
+result = {
+    "key1": Result(2, 75.0), # using namedtuple Result
+    "key2": Result(2, 50.0), # using namedtuple Result
+} 
+```
+
+The first loop of the ```for```-loop is with ```key``` being ```key1``` and ```list_of_values``` being ```[50, 100]```. We build the ```get_average_for_list_of_values_delegating_generator``` and then prime it.
+
+We then send each value from ```[50, 100]``` to the delegating generator. The delegating generator sends each value from the client to the subgenerator (```averager```). **Each value sent to the delegating generator, is sent by the delegating generator to the subgenerator with the ```yield from``` keyword.** That means that we get the first value ```50``` and send it to the ```averager()``` subgenerator and then the average is computed. We do the same for 100 and then the average is computed. Afterwards, the ```for```-loop is done, so we will send ```None``` to the subgen, so we can close it and get our return value. After the return value is being returned from the subgenerator, the exception ```StopIteration``` will be raised. ```yield from``` will except that exception and become the ```value``` attribute of it. The ```result_dict[dict_key]``` will therefore become the average of the given values, since ```yield from``` will become the ```value``` attribute of the ```StopIteration``` exception. Regardless of the fact that ```yield from``` handles the exception itself, the ```while True``` loop will break because the exception has been raised.
+
+The process is repeated for ```key2``` and ```[0, 100]```.
+
+### Example 2
+
+The following example is from the book.
+
+The next example provides more context to see ```yield from``` at work:
+
+![Yield From Example](ScreenshotsForNotes/Chapter16/YieldFromExample.PNG)
+
+While the delegating generator is suspended at ```yield from```, the caller sends datat directly to the subgenerator, which yields data back to the caller. The delegating generator resumes when the subgenerator returns and the interpreter raises ```StopIteration``` with the returned value attached.
+
+Take a look at the following code:
+
+```Python
+from collections import namedtuple
+
+Result = namedtuple('Result', 'count average')
+
+
+# the subgenerator
+def averager():  # Same average coroutine. Here it is the subgenerator
+    total = 0.0
+    count = 0
+    average = None
+    while True:
+        term = yield  # Each value sent by the client code in main will be bound to term here.
+        if term is None:  # The crucial terminating condition. Without it, a yield from calling this coroutine will
+            # block forever
+            break
+        total += term
+        count += 1
+        average = total / count
+
+    return Result(count, average)  # The return Result will be the value of the yield from expression in grouper
+
+
+# the delegating generator
+def grouper(results, key):  # grouper is the delegating generator
+    while True:  # Each iteration in this loop creates a new instance of averager; each is a generator object
+        # operating as a coroutine
+        results[key] = yield from averager()  # Whenever grouper is sent a value, it's piped into the averager
+        # instance by the yield from. grouper will be suspended here as long as the averager instance is consuming
+        # values sent by the client. When an averager instance runs to the end, the value it returns is bound to
+        # results[key]. The while loop then proceeds to create another averager instance to consume more values.
+
+
+# the client code, a.k.a. the caller
+def main(data):  # main is the client code, or "caller" in PEP 380 parlance. This is the function that drives everything
+    results = {}
+    for key, values in data.items():
+        group = grouper(results, key)  # group is a generator object resulting from calling grouper with the results
+        # dict to collect the results, and a particular key. It will operate as a coroutine.
+        next(group)  # Prime the coroutine
+
+        for value in values:
+            group.send(value)  # Send each value into the grouper. That value ends up in the term = yield line of
+            # averager; grouper never has a chance to see it.
+        group.send(None)  # important !  # Sending None into grouper causes the current averager instance to
+        # terminate, and allows grouper to run again, which creates another averager for the next group of values
+
+    report(results)
+
+
+# output report
+def report(results):
+    for key, result in sorted(results.items()):
+        group, unit = key.split(";")
+        print("{0:2} {1:5} averaging {2:.2f}{3}".format(
+            result.count,
+            group,
+            result.average,
+            unit
+        ))
+
+
+data = {
+    'girls;kg':
+        [40.9, 38.5, 44.3, 42.2, 45.2, 41.7, 44.5, 38.0, 40.6, 44.5],
+    'girls;m':
+        [1.6, 1.51, 1.4, 1.3, 1.41, 1.39, 1.33, 1.46, 1.45, 1.43],
+    'boys;kg':
+        [39.0, 40.8, 43.2, 40.8, 43.1, 38.6, 41.4, 40.6, 36.3],
+    'boys;m':
+        [1.38, 1.5, 1.32, 1.25, 1.37, 1.48, 1.25, 1.49, 1.46],
+}
+
+if __name__ == '__main__':
+    main(data)
+
+"""
+Output:
+
+ 9 boys  averaging 40.42kg
+ 9 boys  averaging 1.39m  
+10 girls averaging 42.04kg
+10 girls averaging 1.43m  
+"""
+```
+
+Here is an overview of how the above example works, explaining what would happen if we omitted the call ```group.send(None)``` marked ```"important!"``` in ```main```:
+
+* Each iteration of the outer ```for``` loop creates a new ```grouper``` instance named ```group```; this is the delegating generator.
+* The call ```next(group)``` primes the ```grouper``` delegating generator, which enters its ```while True``` loop and suspends at the ```yield from```, after calling the subgenerator ```averager```.
+* The inner ```for``` loop calls ```group.send(value)```; this feeds the subgenerator ```averager``` directly. Meanwhile, the current ```group``` instance of ```grouper``` is suspended at the ```yield from```.
+* When the inner ```for``` loop ends, the ```group``` instance is still suspended at the ```yield from```, so the assignment to ```results[key]``` in the body of ```grouper``` has not happened yet.
+* Without the last ```group.send(None)``` in the outer ```for``` loop, the ```averager``` subgenerator never terminates, the delegating generator ```group``` is never reactivated, and the assignment to ```results[key]``` never happens.
+* When execution loops back to the top of the outer ```for``` loop, a new ```grouper``` instance is created and bound to ```group```. The previous ```grouper``` instance is garbage collected (together with its own unfinished ```averager``` subgenerator instance).
+
+> The key takeway from this experiment is: if a subgenerator never terminates, the delegating generator will be suspended forever at the ```yield from```. This will not prevent your program from making progress because the ```yield from``` ( like the simple ```yield``` ) transfers control to the client code (i.e., the claler of the delegating generator). But it does mean that some task will be left unfinished.
+
+Because the delegating generator works as a pipe, you can connect any number of them in a pipeline: one delegating generator uses ```yield from``` to call a subgenerator, which itself is a delegating generator calling another subgenerator with ```yield from```, and so on. Eventually this chain must end in a simple generator that uses just ```yield```, but it may also end in any iterable object.
+
+Every ```yield from``` chain must be driven by a client that calls ```next(...)``` or ```.send(...)``` on the outermost delegating generator. This call may be implicit, such as a ```for``` loop.
+
+## The meaning of ```yield from```
+
+```>```
+
+> "When the iterator is another generator, the effect is the same as if the body of the subgenerator were inlined at the point of the ```yield from``` expression. Furthermore, the subgenerator is allowed to executed a ```return``` statement with a value, and that value becomes the value of the ```yield from``` expression."
+
+The approved version of PEP 380 explains the behavior of ```yield from``` in six points:
+
+* Any values that the subgenerator yields are passed directly to the caller of the delegating generator (i.e., the client code)
+* Any values sent to the deleating generator using ```send()``` are passed directly to the subgenerator. If the sent value is ```None```, the subgenerator's ```__next__()``` method is called. If the sent value is not ```None```, the subgenerator's ```send()``` method is called. If the call raises ```StopIteration```, the delegating generator is resumed. Any other exception is propagated to the delegating operator.
+* ```return expr``` in a generator (or subgenerator) causes ```StopIteration(expr)``` to be raised upon exit from the generator.
+* The value of the ```yield from``` expression is the first argument to the ```StopIteration``` exception raised by the subgenerator when it terminates.
+
+The other two features of ```yield from``` have to do with exception and termination:
+
+* Exceptions other than ```GeneratorExist``` thrown into the delegating generator are apssed ot the ```throw()``` method of the subgenerator. If the call raises ```StopIteration```, the delegating generator is resumed. Any other exception is propagated to the delegating generator.
+* If a ```GeneratorExit``` exception is thrown into the delegating generator, or the ```close()``` method of the delegating generator is called, then the ```close()``` method of the subgenerator is called if it has one. If this call results in an exception, it is propagated to the deelgating generator. Otherwise, ```GeneratorExit``` is raised in the delegating generator.
+
+### Simplified Pseudocode
+
+Simplified pseudocode equivalent to the statement RESULT = yield from EXPER in the delegating generator ( this covers the simplest case: ```.throw()``` and ```.close()``` are not supporteed; the only exception handled is ```StopIteration``` )
+
+```
+_i = iter(EXPR)
+
+try:
+    _y = next(_i)
+except StopIteration as _e:
+    _r = _e.value
+else:
+    while 1:
+        _s = yield _y
+        try:
+            _y = _i.send(_s)
+        except StopIteration as _e:
+            _r = _e.value
+            break
+
+RESULT = _r
+```
+
+* The EXPR can be any iterable, because iter() is applied to get an iterator _i (this
+is the subgenerator).
+* The subgenerator is primed; the result is stored to be the first yielded value _y.
+* If ```StopIteration``` was raised, extract the value attribute from the exception and
+assign it to _r: this is the RESULT in the simplest case.
+* While this loop is running, the delegating generator is blocked, operating just
+as a channel between the caller and the subgenerator.
+* Yield the current item yielded from the subgenerator; wait for a value _s sent by
+the caller. Note that this is the only yield in this listing.
+* Try to advance the subgenerator, forwarding the _s sent by the caller. Note that this is the only ```yield``` in this listing
+* If the subgenerator raised ```StopIteration```, get the value, assign to _r and exit the loop, resuming the delegating generator.
+* _r is the RESULT: the value of the whole yield from expression.
+
+The variables are:
+
+* ```_i``` (iterator)
+    * The subgenerator.
+* ```_y``` (yielded)
+    * A value yielded from the subgnerator.
+* ```_r``` (result)
+    * The eventual result, i.e. the value of the yield from expression when the subgenerator ends.
+* ```_s``` (sent)
+    * A value sent by the caller to the delegating generator, which is forwarded to the subgenerator.
+* ```_e``` (exception)
+    * An exception (always an instance of StopIteration in this simplified pseudocode).
+
+### Complete Pseudocode 
+
+Pseudocode equivalent to the statement RESULT = yield from EXPR in the delegating generator
+
+```
+_i = iter(EXPR)
+
+try:
+    _y = next(_i)
+except StopIteration as _e:
+    _r = _e.value
+else:
+    while 1:
+        try:
+            _s = yield _y
+        except GeneratorExit as _e:
+            try:
+                _m = _i.close
+            except AttributeError:
+                pass
+            else:
+                _m()
+            raise _e
+        except BaseException as _e:
+            _x = sys.exc_info()
+            try:
+                _m = _i.throw
+            except AttributeError:
+                raise _e
+            else:
+                try:
+                    _y = _m(*_x)
+                except StopIteration as _e:
+                    _r = _e.value
+                    break
+        else:
+            try:
+                if _s is None:
+                    _y = next(_i)
+                else:
+                    _y = _i.send(_s)
+            except StopIteration as _e:
+                _r = _e.value
+                break
+
+RESULT = _r
+```
+
+* The EXPR can be any iterable, because iter() is applied to get an iterator _i (this is the subgenerator).
+* The subgenerator is primed; the result is stored to be the first yielded value _y.
+* If ```StopIteration``` was raised, extract the value attribute from the exception and assign it to _r: this is the RESULT in the simplest case.
+
+* While this loop is running, the delegating generator is blocked, operating just as a channel between the caller and the subgenerator.
+* Yield the current item yielded from the subgenerator; wait for a value _s sent by the caller. This is the only yield in this listing.
+* This deals with closing the delegating generator and the subgenerator. Since the subgenerator can be any iterator, it may not have a close method.
+* This deals with exceptions thrown in by the caller using .throw(…). Again, the subgenerator may be an iterator with no throw method to be called — in which case the exception is raised in the delegating generator.
+* If the subgenerator has a throw method, call it with the exception passed from the caller. The subgenerator may handle the exception (and the loop continues); it may raise StopIteration (the _r result is extracted from it, and the loop ends); or it may raise the same or another exception which is not handled here and propagates to the delegating generator.
+* If no exception was received when yielding…
+* Try to advance the subgenerator…
+* Call next on the subgenerator if the last value received from the caller was None, otherwise call send.
+* If the subgenerator raised StopIteration, get the value, assign to _r and exit the loop, resuming the delegating generator.
+* _r is the RESULT: the value of the whole yield from expression.
+
+## Use Case: Coroutines for discrete event simulation
+
+> Coroutines are a natural way of expressing many algorithms, such as simulations, games, asynchronous I/O, and other forms of event-driven programming or cooperative multitasking.
+>
+> \- Guide van Rossum and Philip J. Eby, PEP 342 - Coroutines via Enhanceed Generators
+
+### About Discrete Event Simulations
+
+A discrete event simulation (DES) is a type of simulation where a system is modeled as a sequence of events. In a DES, the simulation "clock" does not advanced by fixed increemtns, but advanced directly to the simulated time of the next modeled event. For example, if we are simulating the operation of a taxi cab from a high-level perspective, one event is picking up a passenger, the next is dropping the passenger off. It doesn't matter if a trip takes 5 or 50 minutes: when the drop off event happens, the clock is updated to the end time of the trip in a single operation. In a DES, we can simulate a year of cab trips in less than a second. This is in contrast to a continuous simulation where the clock advanced continuously by a fixed - and usually small - increment.
+
+Intuitively, turn-based games are examples of discrete event simulations: the state of the game only changes when a player moves, and while a aplyer is deciding the next move, the simulation clock is frozen. Real-time games, on the other hand, are continuous simulations where the simulation clock is running all the time ,the state of the game is updated many times per second, and slow players are at a real disadvantage.
+
+Both types of simulations cacn be written with multiple threads or a single thread using event-oriented programming techniques such as callbacks or coroutines driven by an event loop. It's arguably more natural to implement a continous simulation using threads to account for actions happening in parallel in real time. On the other hand, coroutines offer exactly the right abstraction for writing a DES. SimPy is a DES package for Python that uses one coroutine to represent each rpocess in the simulation.
+
+> In the field of simulation, the term *process* referes to the activites of an entity in the model, and not an OS process. A simulation process may be implemneted as an OS process, but usuually a thread or a coroutine is used for that purpose.
+
