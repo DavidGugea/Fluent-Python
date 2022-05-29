@@ -4780,3 +4780,53 @@ Both types of simulations cacn be written with multiple threads or a single thre
 
 > In the field of simulation, the term *process* referes to the activites of an entity in the model, and not an OS process. A simulation process may be implemneted as an OS process, but usuually a thread or a coroutine is used for that purpose.
 
+
+# 17. Concurrency with Futures
+
+```>```
+
+## An introduction to ```concurrent.futures```
+
+The main features of the ```concurrent.futures``` package are the ```ThreadPoolExecutor``` and ```ProcessPoolExecutor``` classes, which implement an interface that allows you to submit callables for execution in different threads or processes, respectively. The classes manage an internal pool of worker threads or processes, and a queue of tasks to be executed.
+
+### Futures
+
+Futures are essential components in the internals of ```concurrent.futures``` and of ```asyncio```, but as users of these libraries we sometimes don't see them.
+
+As of Python 3.4, there are two classes named ```Future``` in the standard library: ```concurrent.futures.Future``` and ```asyncio.Future```. They serve the same purpose: an instnace of either ```Future``` class represents a deferred computation that may or may not have completed. This is similar to the ```Deferred``` class in Twisted, the ```Future``` class in Tornado, and ```Promise``` objects in various JavaScript libraries.
+
+Futures encapsulate pending operations so that they can be put in queues, their state of completion can be queried, and their results (or exceptions) can be retrieved when available.
+
+An important thing to know about futures in general is that they shouldn't be created by users: they are meant to be instantiated exclusively by the conrurency frameowrk, be it ```concurrent.futures``` or ```asyncio```. It's easy to understand why: a ```Future``` represents something that will eventually happen, and the only way to be sure that something will happen is to schedule its execution. Therefore, ```concurrent.futures.Future``` instances are created only as the result of schedlugin something for execution with a ```concurrent.futures.Executor``` subclass. For example, the ```Executor.submit()``` method takes a callable, schedules it to run, and returns a future.
+
+Client code is not supposed to change the state of a future: the concurrency frameowkr changes the state of a future whne the computation it represnets is done, and we can't control when that happens.
+
+Both types of ```Future``` have a ```.done()``` method that is nonblocking and returns a Boolean that tells you wheter the callable linnked to that future has executed or not. Instaed of asking wheter a future is done, client code usually asks to be notified. That's why both ```Future``` classes have an ```.add_done_callback()``` method: you give it a callable, and the callable will be invoked with the future as the single argument when the future is done.
+
+There is also a ```.result()``` method, which works the same in both classes when the future is done: it returns the result of the callable, or re-raises whatever exception might have been thrown twhen the callable was executed. However, when the future is not done, the behavior of the ```result``` method is ver different between the two flavors of ```Future```. In a ```concurrency.futures.Future``` instance, invoking ```.fresult()``` will block the caller's thread until the result is ready. An optional ```timeout``` argument can be passed, and if the future is not done in the specified time, a ```TimeoutError``` exception is raised.
+
+The ```as_completed``` method yields futures as they are completed.
+
+## Blocking I/O and the GIL
+
+The CPython interpreter is not thread-safe internally, so it has a Global Interpreter Lock (GIL), which allows only one thread at a time to execute Python bytecodes. That's why a single Python process usually cannot use multiple PCU cores at the same time. This is a limitation of the CPython Interpreter, not of the Python language itself. Jython and IronPython are not limited in this way; but Pypy, the fastest Python interpreter available, also has a GIL.
+
+When we write Python code, we have no control over the GIL, but a built-in function or an extension written in C can release the GIL while running time-consuming tasks. In fact, a Python library coded in C can manage the GIL, launch its own OS threads, and take advantage of all available CPU cores. This complicates the code of the library considerablye, and most library authors don't do it.
+
+However, all standard library functions that perform blocking I/O release the GIL when waiting for a result from the OS. This means PYthon programs that are I/O bound can benefit from using threads at the Python level: while one PYthon thread is waiting for a response from the network, the blocked I/O function releases the GIL so another thread can run.
+
+Every blocking I/O function in the Python standard library releases the GIL, allowing other threads to run. The ```time.sleep()``` function also releases the GIL. Therefore, Python threads are perfectly usable in I/O-bound applications, despite the GIL.
+
+## Launching processes with ```concurrent.futures```
+
+The ```concurrent.futures``` documentation page is subtitled "Launching parallel tasks". The package does enable turlly parallel computations because it supports distributing work among multiple Python processes using the ```ProcessPoolExecutor``` class -thus bypassing the GIL and leveraging all available CPU cores, if you need to do CPU-bound processing.
+
+Both ```ProcessPoolExecutor``` and ```ThreadPoolExecutor``` implement the generic ```Executor``` interface, so its' very easy to switch from a thread-based to a process-based solution using ```concurrent.futures```.
+
+For simple uses, the only notable difference between the two concrete executor classes is that ```ThreadPoolExecutor.__init__``` requires a ```max_workers``` argument setting the number of threads in the pool. That is an optional argument in ```ProcessPoolExecutor```, and most of the time we don't use it - the default is the number of CPUs returned by ```os.cpu_count()```. This makes sense: for CPU-bound processing, it makes no sense to ask for more workers than CPUs. On the other hand, for I/O-bound processing, you may use 10, 100, or 100 threads in a ```ThreadPoolExecutor```; the best number depends on what you're doing on the available memory, and finding the optimal number will require careful testing.
+
+## ```Executor.map```
+
+The ```Executor.map``` function is easy to euse but it has a feature that may or may not be helpful, depending on your needs: it returns the results exactly in the same order as the calls are started: if the first call takes 10s to produce a result, and the others take 1s each, your code will block for 10s as it tries to retrieve the first result of the generator returned by ```map```. After that, you'll get the remaining results without  blocking because they will be done. That's OK when you must have all the reuslts before proceeding, but often it's preferable to get the reuslts as they ar ready, regardless of the order they were submitted. To do that, you need a combination of the ```Executor.submit``` method and the ```futures.as_completed``` function.
+
+The combination of ```executor.submit``` and ```futures.as_completed``` is more flexibled than ```executor.map``` because you can ```submit``` different callables and arguments, while ```executor.map``` is designed to run the same callable on the different arguments. IN addition, the set of futures you pass to ```futures.as_completed``` may coem from more than one executor - perhaps some were created by a ```ThreadPoolExecutor``` instance while other are from a ```ProcessPoolExecutor```.
