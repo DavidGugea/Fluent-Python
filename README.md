@@ -4830,3 +4830,7 @@ For simple uses, the only notable difference between the two concrete executor c
 The ```Executor.map``` function is easy to euse but it has a feature that may or may not be helpful, depending on your needs: it returns the results exactly in the same order as the calls are started: if the first call takes 10s to produce a result, and the others take 1s each, your code will block for 10s as it tries to retrieve the first result of the generator returned by ```map```. After that, you'll get the remaining results without  blocking because they will be done. That's OK when you must have all the reuslts before proceeding, but often it's preferable to get the reuslts as they ar ready, regardless of the order they were submitted. To do that, you need a combination of the ```Executor.submit``` method and the ```futures.as_completed``` function.
 
 The combination of ```executor.submit``` and ```futures.as_completed``` is more flexibled than ```executor.map``` because you can ```submit``` different callables and arguments, while ```executor.map``` is designed to run the same callable on the different arguments. IN addition, the set of futures you pass to ```futures.as_completed``` may coem from more than one executor - perhaps some were created by a ```ThreadPoolExecutor``` instance while other are from a ```ProcessPoolExecutor```.
+
+# 18. Concurrency with asyncio
+
+Deprecated descriptions of ```asyncio``` since I have the first edition of the book.
