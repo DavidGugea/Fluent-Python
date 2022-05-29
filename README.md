@@ -4834,3 +4834,124 @@ The combination of ```executor.submit``` and ```futures.as_completed``` is more 
 # 18. Concurrency with asyncio
 
 Deprecated descriptions of ```asyncio``` since I have the first edition of the book.
+
+---
+
+# Part VI - Metaprogramming
+
+---
+
+# 19. Dynamic Attributes and Properties
+
+```>```
+
+Data attributes and methods are collectively known as *attributes* in Python: a method is just an attribute that is *callable*. Besdies data attributes and methods, we can also create properties, which can be used to replace a public data attribute with *accessor methods* (i.e., getter/setter), without changing the calss interface.
+
+This aggress with the *Uniform Access Principle*:
+
+> All services offered by a module should be available through a uniform notation, which does not betray wheter they are implemented through storage or through computation.
+
+Besides properties, Python provides a rich API for controlling attribute access and implementing dynamic attributes. The interpreter calls special methods such as ```__getattr__``` and ```__setattr__``` to evaluate attribute access using dot notation (e.g., ```obj.attr```). A user-defined class implementing ```__getattr__``` can implement "virtual attributes" by computing values on the fly whenever somebody tries to read a nonexistent attribute like ```obj.no_such_attribute```.
+
+Coding dynamic attributes is the kind of metaprogramming that frameowkr authors do.
+
+## Flexible Object Creation with ```__new__```
+
+We often refer to ```__init__``` as the constructor method, but that's because we adpoted jargon from other languages. The special method that actually constructrs an instnace is ```__new__```: it's a class method (but gets special treatment, so the ```@classmethod``` decorator is not used), and it must return an instance. That instnace will in turn be passed as the first argument ```self``` of ```__init__```. Because ```__init__``` gets an instance when called, and it's actually forbidden from returning anything, ```__init__``` is really an "initializer". The real constructor is ```__new__```-which we rearely need to code because the implementation inherited from ```object``` suffices.
+
+The path just described, from ```__new__``` to ```__init__```, is the most common, but not the only one. The ```__new__``` method can also return an instnace of a different class, and when that happens, the interpreter does not call ```__init__```.
+
+In other words, the process of building an object in Python can be summarized with this pseudocode:
+
+``` Python
+# pseudo-code for object construction
+
+def object_maker(the_class, some_arg):
+    new_object = the_class.__new__(some_arg)
+
+    if isinstance(new_object, the_class):
+        the_class.__init__(new_object, some_arg)
+
+    return new_object
+
+# the following statements are roughly equivalent
+x = Foo('bar)
+x = object_maker(Foo, 'bar')
+```
+
+## A proper look at properties
+
+Although often used as a decorator, the ```property``` built-in is actually a class. In Python, functions and calssesa re often interchangeable, because both are callable and there is no ```new``` operator for object instantiation, so invoking a constructor is no different than invoking a factory function. And both can be used as decorators, as long as they return a new callable that is a suitable replacement of the decorated function.
+
+This is the full signature of the ```property``` constructor:
+
+```Python
+property(fget=None, fset=None, fdel=None, doc=None)
+```
+
+All arguments are optional, and if a function is not provided for one of them, the corresponding operation is not allowed by the resulting property object.
+
+### Property Documentation
+
+When tools such as the console ```help()``` function or IDEs need to display the documentation of a property, they extract the information from the ```__doc__``` attribute of the property.
+
+If used with the classic call syntax, ```property``` can get the documentation string as the ```doc``` argument:
+
+```Python
+weight = property(get_weight, set_weight, doc='weight in kilograms')
+```
+
+## Essential attributes and functions for attribute handling
+
+### Special attributes that affect attribute handling
+
+The behavior of many of the functions and special methods listed in the following sections depend on three special attributes:
+
+* ```__class__```
+    * A reference to the object's class (i.e., ```obj.__class__``` is the same as ```type(obj)```). Python looks for special methods such as ```__getattr__``` only in an object's class, and not in the instances themselves.
+* ```__dict__```
+    * A mapping that stores the writable attributes of an object or class. An object that has a ```__dict__``` cna have arbitrary new attributes set at any time. If a class has a ```__slots__``` attribute, then its instances may not have a ```__dict__```.
+* ```__slots__```
+    * An attribute that may be defined in a class to limit the attributes its instnaces can have. ```__slots__``` is a ```tuple``` of strings naming the allowed attributes. If the '```__dict__```' name is not in ```__slots__```, then the instnaces of that calss will not have a ```__dict__``` of their own, and only the named attributes will be allowed in them.
+
+### Built-in functions for attribute handling
+
+These five built-in functions perform object attribute reading, writing, and introspection:
+
+* ```dir([object])```
+    * Lists most attribtes of the object. The official docs say ```dir``` is intended for interactive use so it does not provide a comprehensive list of attributes, but an "interesting" set of names. ```dir``` can inspect objects implemented with or without a ```__dict__```. The ```__dict__``` attribute itself is not listed by ```dir```, but the ```__dict__``` keys are listed. Several special attribute of classes, such as ```__mro__```, ```__bases__```, and ```__name__``` are not listed by ```dir``` either. If the optional ```object``` argument is not given, ```dir``` lists the names in the current scope.
+* ```getattr(object, name[, default])```
+    * Gets the attribute identified by the ```name``` string from the ```object```. This may fetch an attribute from the object's class or from a superclass. If no such attribute exists, ```getattr``` raises ```AttributeError``` or returns the ```default``` value, if given.
+* ```hasattr(object, name)```
+    Returns ```True``` if the named attribute exists in the ```object```, or can be somehow fetched through it (by inheritance, for example). The documentation explains: "This is implemented by calling getattr(object, name) and seeing wheter it raises an AttributeError or not."
+* ```setattr(object, name, value)```
+    * Assigns the ```value``` to be named attribute of ```object```, if the ```object``` allows it. This may create an new attribute or overwrite an existing one.
+* ```vars([object])```
+    * Returns the ```__dict__``` of ```object```; ```vars``` can't deal with instnaces of classes that define ```__slots__``` and don't have a ```__dict__``` (contrast with ```dir```, which handles such instances). Without an argument, ```vars()``` does the same as ```locals()```: returns a ```dict``` representing the local scope.
+
+### Special methods for attirbute handling
+
+Attribute access using either dot notation or the built-in functions ```getattr```, ```hasattr```, and ```setattr``` trigger the appropriate special methods listed here. Reading and writing attributes directly in the instnace ```__dict__``` does not trigger these special methods - and that's the usual way to bypass them if needed.
+
+"Section 3.3.9. Sepcial method lookup" of the "Data model" chapter warns:
+
+> For custom classes, implicit invocations of special methods are only guaranteed to work correctly if defiend on an object's type, not in hte object's instnace dictionary.
+
+In other words, assume that the special methods will be retrieved on the class itself, even when the target of the action is an instance. For this reason, special methods are not shadowed by instance attributes with the same name.
+
+In the following examples, assume there is a class named ```Class```, ```obj``` is an instance of ```Class```, and ```attr``` is an attribute of ```obj```.
+
+For every one of these special methods, it doesn't matter if the attribute access is done using dot notation or one of the built-in functions. For example, both ```obj.attr``` and ```getattr(obj, 'attr')``` trigger ```Class.__getattribute__(obj, 'attr')```.
+
+* ```__delattr__(self, name)```
+    * Always called when there is an attempt to delete an attribute using the ```del``` statement; e.g., ```del obj.attr``` triggers ```Class.__delattr__(obj, 'attr')```
+* ```__dir__(self)```
+    * Called when ```dir``` is invoked on the object, to provide a listing of attributes; e.g., ```dir(obj)``` triggers ```Class.__dir__(obj)```.
+* ```__getattr__(self, name)```
+    * Called only when an attempt to retrieve the named attribute fails, after the ```obj```, ```Class```, and its superclasses are searched. The expressions ```obj.no_such_attr```, ```getattr(obj, 'no_such_attr')```, and ```hasattr(obj, 'no_such_attr')``` may trigger ```Class.__getattr__(obj, 'no_such_attr')```, but only if an attribute by that name cannot be found in ```obj``` or in ```Class``` and its superclasses.
+* ```__getattribute__(self, name)```
+    * Always called when there is an attempt to retrieve the named attribute, except when the attribute sought is a sepcial attribute or method. Dot notation and the ```getattr``` and ```hasattr``` built-ins trigger this method. ```__getattr__``` is only invoked after ```__getattribute__```, and only when ```__getattribute__``` raises ```AttributeError```. To retrieve attributes of the instance ```obj``` without triggering an infinite recursion, implementation of ```__getattribute__``` should use ```super().__getattribute__(obj, name)```.
+* ```__setattr__(self, name, value)```
+    Always called when there is an attempt to set the named attribute. Dot notation and the ```setattr``` built-in trigger this method; e.g., both ```obj.attr = 42``` and ```setattr(obj, 'attr', 42)``` trigger ```Class.__setattr__(obj, 'attr', 42)```.
+
+> In practice, because they are unconditionally called an affect practically every attribute access, the ```__getattribute__``` and ```__setattr__``` special methods are harder to use correctly than ```__getattr__``` - which only handles nonexisting attribute names. Using properties or descriptors is less error prone than defining these special methods.
