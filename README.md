@@ -4955,3 +4955,119 @@ For every one of these special methods, it doesn't matter if the attribute acces
     Always called when there is an attempt to set the named attribute. Dot notation and the ```setattr``` built-in trigger this method; e.g., both ```obj.attr = 42``` and ```setattr(obj, 'attr', 42)``` trigger ```Class.__setattr__(obj, 'attr', 42)```.
 
 > In practice, because they are unconditionally called an affect practically every attribute access, the ```__getattribute__``` and ```__setattr__``` special methods are harder to use correctly than ```__getattr__``` - which only handles nonexisting attribute names. Using properties or descriptors is less error prone than defining these special methods.
+
+# 20. Attribute Descriptors
+
+```>```
+
+Descriptors are a way of reusing the same access logic in multiple attributes.
+
+A descriptor is a calss that implements a protocol consisting of the ```__get__```, ```__set__```, and ```__delete__``` methods. The ```property``` class implements the full descriptor protocol. As usual with protocols, partial implementations are OK. In fact, most descriptors we see in real code implement only ```__get__``` and ```__set__```, and many implement only one of these methods.
+
+Descriptors are a distinguishin feature of Python, deployed not only at the application level but also in the language infrastructure. Besides proeprties, other Python features that leverage descriptors are methods and the ```classmethod``` and ```staticmethod``` decorators.
+
+## Basic Definitions
+
+Before starting with descriptors, there are some important terms that we must define:
+
+* *Descriptor class*
+    * A class implementing the descriptor protocol.
+* *Managed class*
+    * The class where the descriptor instances are declared as class attributes
+* *Descriptor instance*
+    * Each instance of a descriptor calss, declared as a class attribute of the managed class
+* *Managed instance*
+    * One instance of the managed class
+* *Storage attribute*
+    * An attribute of the managed instnace that will hold the value of a managed attribute for that particlar instance
+* *Managed attribute*
+    * A public attribute in the managed class that will be handled by a descriptor instance, with value stored in storage attributes. In other words, a descriptor instance and a storage attribute provide the infrastructure for a managed attribute
+
+
+## Example of a simple descriptor
+
+A class implementing a ```__get__```, a ```__set__```, or a ```__delete__``` method is a descriptor. You use a descriptor by declaring instances of it as class attributes of another class.
+
+Take a look at the following UML diagram:
+
+![Simple descriptor example UML](ScreenshotsForNotes/Chapter20/simple_descriptor_example.PNG)
+
+Note that the word ```weight``` appears twice because there are really two distinct attributes naemd ```weight```: one is a class attribute of ```LineItem```, the other is an instance attribute that will exist in each ```LineItem``` object. This also applies to ```price```.
+
+This is how you would implement this:
+
+```Python
+class Quantity:  # Descriptor is a protocol-based feature; no subclassing is needed to implement one.
+    def __init__(self, storage_name):
+        self.storage_name = storage_name  # Each Quantity instance will have a storage_name attribute: that's the name of the attribute that will hold the value in the managed instances.
+
+    def __set__(self, instance, value):  # __set__ is called when there is an attempt to assign to the managed attribute. Here, self is the descriptor instance (i.e., LineItem.weight or LineItem.price), instance is the manage instnace (a LineItem instance), and value is the value being assigned
+        if value > 0:
+            instance.__dict__[self.storage_name] = value  # Here, we must handle the managed instance __dict__ directly; trying to use the setattr built-in would trigger the __set__ method again, leading to infinite recursion.
+        else:
+            raise ValueError('value must be > 0')
+
+
+class LineItem:
+    weight = Quantity('weight')  # The first descriptor instance is bound to the weight attribute
+    price = Quantity('price')  # The second descriptor instance is bound to the price attribute
+
+    def __init__(self, description, weight, price):
+        self.description = description
+        self.weight = weight
+        self.price = price
+
+    def subtotal(self):
+        return self.weight * self.price
+```
+
+> When coding a ```__set__``` method, you must keep in mind what the ```self``` and ```instance``` arguments mean: ```self``` is the descriptor instance, and ```instnace``` is the managed instance. Descriptors managing instnace attributes should store values in the managed instnaces. That's why Python provides the ```instance``` argument to the descriptor methods.
+
+## Overriding versus nonoverriding descriptors
+
+Frecall that there is an important asymmetry in the way Python handles attributes. Reading an attribute through an instance normally returns the attribute defined in the instance, but if there is no such attribute in the instance, a class attribute will be retrieved. On the other hand, assigning to an attribute in an instance normally creates the attribute in the instnace, without affecting the class at all.
+
+This asymmetry also affects descirptors, in effect creating two broad categories of descriptors depending on wheter the ```__set__``` method is defined.
+
+### Overriding descriptor
+
+A descriptor that implements the ```__set__``` method is called an *overriding descriptor*, because although it is a class attribute, a descriptor implementing ```__set__``` will override attempts to assign to instance attributes.
+
+Properties are also overriding descriptors: if you don't provide a setter function, the default ```__set__``` from the ```property``` class will raise ```AttributeError``` to signal that the attribute is read-only.
+
+### Overriding descriptor without ```__get__```
+
+Usually, overriding descriptors implement both ```__set__``` and ```__get__```, but it's also possible to implement only ```__set__```. In this case, only writing is handled by the descriptor. Reading the descriptor through an instance will return the descriptor object itself because there is no ```__get__``` to handle that access. If a namesake instance attribute is created with a new value via direct access to the instance ```__dict__```, the ```__set__``` method will still override further attempts to set that attribute, but reading that attribute will simply return the new value from the instance, instead of returning the descriptor object. In other words, the instnace attribute will shadow the descriptor.
+
+### Nonoverriding descriptor
+
+If a descriptor does not implement ```__set__```, then it's a nonoverriding descriptor. Setting an instance attribute with the same name will shadow the descriptor, rendering it ineffective for handling that attribute in that specific instance. Methods are implemented as nonoverriding descriptors.
+
+Python contributors and authors use different terms when discussing this concepts. Overriding descriptors are also called *data descriptors* or *enforced descriptors*. Nonoverriding descriptors are also known as *nondata descriptors* or *shadowable descriptors*.
+
+### Methods are descriptors
+
+A function within a class becomes a bound method because all user-defined functions have a ```__get__``` method, therefore they operate as descriptors when attached to a class.
+
+Because functions do not implement ```__set__```, they are nonoverriding descriptors.
+
+As usual with descriptors, the ```__get__``` of a function returns a reference to itself when the access happens through the managed class. But when the access goes through an instnace, the ```__get__``` of the function returns a bound method object: a callable that wraps the function and bind the managed instnace (e.g., ```obj```) to the first argument of the function (i.e., ```self```), like the ```functools.partial``` function does.
+
+The bound method object also has a ```__call__``` mehtod, which handles the actual invocation. This method calls the original function referenced in ```__func__```, passing the ```__self__``` attribute of the method as the first argument. That's who the implicit binding of the conventional ```self``` argument works.
+
+The way function sare turned into bound methods is a prime example of how descriptors are used as infrastructure in the language.
+
+## Descriptor Usage Tips
+
+The following list addresses some practical consequences of the descriptor characteristics just described:
+
+* *Use ```property``` to Keep It Simple*:
+    * The ```property``` built-in actually creates overriding descriptors implementing both ```__set__``` and ```__get__```, even if you do not define a setter method. The default ```__set__``` of a property raises ```AttributeError: can't set attribute```, so a property is the easiest way to create a read-only attribute, avoiding the issue described next.
+* *Read-only descriptors require ```__set__```* 
+    * If you use a descriptor calss to implement a read-only attribute, you must remember to code both ```__get__``` and ```__set__```, otherwise setting a namesake attribute on an instnace will shadow the descriptor. The ```__set__``` method of a read-only attribute should just raise ```AttributeError``` with a suitable message.
+* *Validation descriptors cna work with ```__set__``` only*
+    * In a descriptor designed only for validation, the ```__set__``` method should check the ```value``` argument it gets, and if valid set it directly in the instance ```__dict__``` using the descriptor instance name as key. That way, reading the attribute with the same name from the instnace will be as fast as possible, because it will not require a ```__get__```
+* *Caching can be done efficiently with ```__get_``` only
+    * If you code just the ```__get__``` method, you have a nonoverriding descriptor. These are useful to make some expensive computation and then cache the result by setting an attribute by the same name on the instance. The namesake instnace attribute will shadow the descriptor, so subsequent access to that attribute will fetch it directly from the instance ```__dict__``` and not trigger the descriptor ```__get__``` anymore.
+* *Nonspecial methods can be shadowed by instance attribute*
+    * Because functions and methods only implement ```__get__```, they do not handle attempts at setting instance attributes with the same name, so a simple assignment like ```my_obj.the_method = 7``` means that further access to ```the_method``` through that instnace will retrieve the number ```7``` - without affecting the calss or other instnaces. However, the issues does not interfere with special methods. The interpreter only looks for special methods in the class itself, in other words, ```repr(x)``` is executed as ```x.__class__.__repr__(x)```, so a ```__repr__``` attribute defined in ```x``` has no effect on ```repr(x)```. For the same reason, the existence of an attribute named ```__getattr__``` in an instance will not subvert the usual attribute access algorithm
