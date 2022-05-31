@@ -5071,3 +5071,186 @@ The following list addresses some practical consequences of the descriptor chara
     * If you code just the ```__get__``` method, you have a nonoverriding descriptor. These are useful to make some expensive computation and then cache the result by setting an attribute by the same name on the instance. The namesake instnace attribute will shadow the descriptor, so subsequent access to that attribute will fetch it directly from the instance ```__dict__``` and not trigger the descriptor ```__get__``` anymore.
 * *Nonspecial methods can be shadowed by instance attribute*
     * Because functions and methods only implement ```__get__```, they do not handle attempts at setting instance attributes with the same name, so a simple assignment like ```my_obj.the_method = 7``` means that further access to ```the_method``` through that instnace will retrieve the number ```7``` - without affecting the calss or other instnaces. However, the issues does not interfere with special methods. The interpreter only looks for special methods in the class itself, in other words, ```repr(x)``` is executed as ```x.__class__.__repr__(x)```, so a ```__repr__``` attribute defined in ```x``` has no effect on ```repr(x)```. For the same reason, the existence of an attribute named ```__getattr__``` in an instance will not subvert the usual attribute access algorithm
+
+# 21. Class Metaprogramming
+
+> [Meatclasses] are deeper magic than 99% of users should ever worry about. If you wonder whether you need them, you don't (the people who actually need them know with certainty that they need them, and don't need an explanation about why.)
+> 
+> \- Tim Peters, *Inventor of the timsort algorithm and prolific Python contributor*
+
+```>```
+
+Class metaprogramming is the art of creating or customizing classes at runtime. Classes are first-class objects in Python, so a function can be used to create a new class at any time, without using the ```class``` keyword. Class decorators are also functions, but capable of inspecting, changing, and even replacing the decorated class with another class. Finally, metaclasses are the most advanced tool for class metaprogramming: they let you create whole new categories of classes with special traits, such as the abstract base classes.
+
+Metaclasses are powerful, but hard to get right. Class decorators solve many of the same problems more simply.
+If you are not authoring a framework, you should not be writing metaclasses.
+
+## A class factory
+
+Take a look at the following code:
+
+```Python
+def record_factory(cls_name, field_names):
+    try:
+        field_names = field_names.replace(',', ' ').split()
+    except AttributeError:  # no .replace or .split
+        pass  # assume it's already a sequence of identifiers
+
+    field_names = tuple(field_names)
+
+    def __init__(self, *args, **kwargs):
+        attrs = dict(zip(self.__slots__, args))
+        attrs.update(kwargs)
+        for name, value in attrs.items():
+            setattr(self, name, value)
+
+    def __iter__(self):
+        for name in self.__slots__:
+            yield getattr(self, name)
+
+    def __repr__(self):
+        values = ', '.join('{}={!r}'.format(*i) for i in zip(self.__slots__, self))
+        return '{}({})'.format(self.__class__.__name__, values)
+
+    cls_attrs = dict(
+        __slots__=field_names,
+        __init__=__init__,
+        __iter__=__iter__,
+        __repr__=__repr__
+    )
+
+    return type(cls_name, (object,), cls_attrs)
+```
+
+
+We usually think of ```type``` as a function, because we use it like one, e.g., ```type(my_object)``` to get the class of the object - same as ```my_object.__class__```. However, ```type``` is a class. It behaves like a class that creates a new class when invoked with three arguments:
+
+```Python
+MyClass = type('MyClass', (MySuperClass, MyMixin),
+               {'x': 42, 'x2': lambda self: self.x * 2})
+```
+
+The three arguments of ```type``` are named ```name```, ```bases```, and ```dict``` - the latter being a mapping of attribute names and attributes for the new class. The preceding code is functionally equivalent to this:
+
+```Python
+class MyClass(MySuperClass, MyMixin):
+    x = 42
+
+    def x2(self):
+        return self.x * 2
+```
+
+The novelty here is that the instances of ```type``` are classes.
+
+In summary, the last line of ```record_factory``` in the example above builds a class named by the value of ```cls_name```, with ```object``` as its single immediate superclass and with calss attributes named ```__slots__```, ```__init__```, ```__iter__```, and ```__repr__```, of which the last three are instance methods.
+
+Invoking ```type``` with three arguments is a common way of creating a class dynamically. If you peek at the source code for ```collections.namedtuple```, you'll see a different approach: there is ```_class_template```, a source code template as a string, and the ```namedtuple``` function fills its blanks calling ```_class_template.format(..)```. The resulting source code string is then evaluated with the ```exec``` built-in function.
+
+> It's good practice to avoid ```exec``` or ```eval``` for metaprogramming in Python. These functions pose serious security risks if they are fed strings (even fragments) from untrusted sources. Python offers sufficient introspection tools to make ```exec``` and ```eval``` unnecessary most of the time. However, the Python core developers chose to use ```exec``` when implementing ```namedutple```. The chose napproach makes the code generated for the class available in teh ```._source``` attribute.
+
+## Class decorators
+
+Class decorators are very similar to function decorators. They take in a class as an argument and return it:
+
+```Python
+def class_decorator(cls):
+    # Do something with the class, for example:
+    for key, attr in cls.__dict__.items():
+        if isinstance(attr, Validated):
+            type_name = type(attr).__name__
+            attr.storage_name = '_{}#{}'.format(type_name, key)
+
+    return cls
+```
+
+Class decorators are a simpler way of doing something that previously required a metaclass: customizing a class the moment it's created.
+
+A significant drawback of class decorators is that they act only on the calss where they are directly applied. This means subclasses of the decorated class may or may not inherit the changes by the decorator, depending on what those changes are.
+
+## What happens when: import time versus runtime
+
+For successful metaprogramming, you must be aware of when the Python interpreter evaluates each block of code. Python programmers talk about "import time" versus "runtime" but the terms are not strictly defined and there is a gray area between them. At import time, the interpreter parses the source code of a ```.py``` module in one pass from top to bottom, and generates the bytecode to be executed. That's when syntax errors may occur. If there is an up-to-date ```.pyc``` file available in the local ```__pycache__```, those steps are skipped because the bytecode is ready to run.
+
+Although compiling is definetly an import-time activity, other things may happen at that time, because almost every statement in Python is executable in the sense that they potentially run user code and cahnge the state of the user program. In particular, the ```import``` statement is not merely a decalration but it actually runs all the top-level code of the importated module when it's imported for the first time in the process - further imports of the same module will use a cache, and onlyl name binding occurs then. That top-level code may do anything, including actions typical of "runtime", such as connecting to a database. That's why the border between "import time" and "runtime" is fuzzy: the ```import``` statement can trigger all sorts of "runtime" behavior.
+
+Importing "runs all the top-level code" but "top-level code" requires some elaboration. The interpreter executes a ```def``` statement on the top level of a module when the module is imported, but what does that achieve ? The interpreter comiples the function body ( if it's the first time taht module is imported ), and binds the function object to its global name, but it does not execute the body of the function, obviously. In the usual case, this means that the interpreter define top-level functions at import time, but executes their bodies only when - and if - the functions are invoekd at runtime.
+
+For classes, the story is different: at import time, the interpreter executes the body of every calss, even the body of classes nested in other classes. Executino of a class body means that the attributes and methods of the class are defined, ant then the class object itself is built. In this sense, the body of classes is "top-level code": it runs at import time.
+
+## Metaclasses 101
+
+A metaclass is a class factory, except that instaed of a function, a metaclass is written as a class. A metaclass is a class that builds classes.
+
+Python classe are instances of ```type```. ```type``` is the metaclass for most built-in and user-defined classes:
+
+```Python
+>>> 'spam'.__class__
+<class 'str'>
+>>> str.__class__
+<class 'type'>
+>>> MyClass.__class__
+<class 'type'>
+>>> type.__class__
+<class 'type'>
+```
+
+To avoid infinite regress, ```type``` is an instance of itself, as the last line shows.
+
+![Metaclasses diagram](ScreenshotsForNotes/Chapter21/metaclasses_diagram.PNG)
+
+Both diagrams are true. The left one emphasizes that ```str```, ```type``` and ```LineItem``` ( a class ) are subclasses of object. The right one makes it clear that ```str```, ```object```, and ```LineItem``` are instances of ```type```, because they are all classes.
+
+The classes ```object``` and ```type``` have a unique relationship: ```object``` is an instance of ```type```, and ```type``` is a subclass of ```object```. This relationship is "magic": it cannot be expressed in Python because either class would have to exist before the other could be defined. The fact that ```type``` is an instnace of itself is also magical.
+
+Besides ```type```, a few other metaclasses exist in the standard library, such as ```ABCMeta``` and ```Enum```. The next snippet shows that the class of ```collections.Iterable``` is ```abc.ABCMeta```. The class ```Iterable``` is abstract, but ```ABCMeta``` is not - after all, ```Itearble``` is an instance of ```ABCMeta```:
+
+```Python
+>>> import collections
+>>> collections.Iterable.__class__
+<class 'abc.ABCMeta'>
+>>> import abc
+>>> abc.ABCmETA.__class__
+<class 'type'>
+>>> abc.ABCMeta.__mro__
+(<class 'abc.ABCMeta'>, <class 'type'>, <class 'object'>)
+```
+
+Ultimately, the class of ```ABCMeta``` is also ```type```. Every class is an instance of ```type```, directly or indirectly, but only metaclasses are also subclasses of ```type```. That's the most important relationship to understand metaclasses: a metaclass, such as ```ABCMeta```, inherits from ```type``` the power to construct classes.
+
+![Object-Type Relationship](ScreenshotsForNotes/Chapter21/object_type_relationship.PNG)
+
+The important takeaway here is that all calsses are instances of ```type```, but metaclasses are also subclasses of ```type```, so they act as calss factories. In particular, a metaclass can customize its instnaces by implementing ```__init__```. A metaclass ```__init__``` method can do everything a calss decorator can do, but its effects are more profound.
+
+When coding a metaclass, it's conventional to replace ```self``` with ```cls```. For exmaple, in the ```__init__``` method of the metaclass, using ```cls``` as the name of the first argument makes it clera that the instnace under construction is a class.
+
+### The metaclass ```__prepare__``` special method
+
+In some applications it's interesting to be able to know the otrder in which the attributes of a class are defined. For example, a library to read/write CSV files driven by user-defined classes may want to map the order of the fields declared in the class to the order of the columns in the CSV file.
+
+As we've seen, both the ```type``` constructor and the ```__new__``` and ```__init__``` methods of metaclasses receive the body of the class evaluated as a mapping of names to attributes. However, by default, that mapping is a ```dict```, which means the order of the attributes as they appear in the class body is lost by the time our metacalss or class decorator can look at them.
+
+The solution to this problem is the ```__prepare__``` special method, introduced in Python 3. This special method is revelant only in metaclasses, and it must be a class method (i.e. defined with the ```@classmethod``` decorator). The ```__prepare__``` method is invoked by the interpreter before the ```__new__``` method in the mataclass to create the mappign that will be filled with the attributes from the class body. Besides the mataclass as first argument, ```__prepare__``` gets the name of the calss to be constructed and its tuple of base classes, and it must return a mapping, which will be received as the last argument by ```__new__``` and then ```__init__``` when the mataclass builds a new class.
+
+### Usages of metaclasses
+
+In the real world, metaclasses are used in frameworks and libraries that help programmers perform, among other tasks:
+
+* Attribute validation
+* Applying decorators to many methods at once
+* Object serialization or data conversion
+* Object-relation mapping
+* Object-based persistency
+* Dynamic translation of class strucutres from other langauges
+
+## Classes as objects
+
+Every calss has a number of attributes defined in the Python data model, documneted in *"4.13. Special Attribute"* of the *"Built-in Types"* chapter in the *Library Reference*. Three of those attributes we've seen several times in the book already: ```__mro__```, ```__class__```, and ```__name__```. Other class attributes are:
+
+* ```cls.__bases__```
+    * The tuple of base classes of the class.
+* ```cls.__qualname__```
+    * A new attribute in Python 3.3 holding the qualified name of a class or function, which is a dotted path from the global scope of the module ot the class definition.
+* ```cls.__subclasses__()```
+    * This method returns a list of the immediate subclasses of the class. The implementation uses weak references to avoid circular references between the supercalss and its subclasses - which hold a strong reference to the supercalsses in their ```__bases__``` attribute. The method returns the list of subclasses that currently exist in memory.
+* ```cls.mro()```
+    * The interpreter calls this method when building a class to obtain the tuple of superclasses that is stored in the ```__mro__``` attribute of the class. A metacalss can override this method to customize the method resolution order of the class under construction.
